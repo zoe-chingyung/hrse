@@ -1,0 +1,4 @@
+# Copy to terraform.tfvars (which is gitignored) and fill in your values.
+aws_region  = "eu-west-2"
+environment = "dev"
+log_level   = "DEBUG"
