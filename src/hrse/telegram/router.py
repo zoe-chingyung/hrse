@@ -30,7 +30,9 @@ def route(update: TelegramUpdate, client: TelegramClientProtocol) -> None:
     """
     message = update.message
     if message is None:
-        logger.warning("Update contains no message; ignoring", extra={"update_id": update.update_id})
+        logger.warning(
+            "Update contains no message; ignoring", extra={"update_id": update.update_id}
+        )
         return
 
     text = (message.text or "").strip()

@@ -72,14 +72,10 @@ class SecretsManagerTokenProvider:
         try:
             payload: dict[str, str] = json.loads(secret_string)
         except json.JSONDecodeError as exc:
-            raise ValueError(
-                f"Secret '{self._secret_name}' is not valid JSON"
-            ) from exc
+            raise ValueError(f"Secret '{self._secret_name}' is not valid JSON") from exc
 
         if "bot_token" not in payload:
-            raise KeyError(
-                f"Secret '{self._secret_name}' JSON does not contain 'bot_token' key"
-            )
+            raise KeyError(f"Secret '{self._secret_name}' JSON does not contain 'bot_token' key")
 
         logger.info("Telegram bot token retrieved successfully")
         return payload["bot_token"]

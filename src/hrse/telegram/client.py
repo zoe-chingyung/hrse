@@ -112,9 +112,7 @@ class HttpTelegramClient:
         """
         token = self._token_provider()
         url = f"{_TELEGRAM_API_BASE}/bot{token}/sendMessage"
-        payload = json.dumps(
-            {"chat_id": chat_id, "text": text, "parse_mode": parse_mode}
-        ).encode()
+        payload = json.dumps({"chat_id": chat_id, "text": text, "parse_mode": parse_mode}).encode()
 
         req = urllib.request.Request(
             url,

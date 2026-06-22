@@ -31,9 +31,5 @@ def handle_unknown(chat_id: int, text: str, client: TelegramClientProtocol) -> N
         text:    The original message text (used in the reply for clarity).
         client:  Client used to send the reply.
     """
-    reply = (
-        "🤖 Unknown command.\n\n"
-        "Available commands:\n"
-        "  /health — check service status"
-    )
+    reply = "🤖 Unknown command.\n\n" "Available commands:\n" "  /health — check service status"
     client.send_message(chat_id=chat_id, text=reply)

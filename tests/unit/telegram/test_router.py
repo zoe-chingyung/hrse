@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from unittest.mock import MagicMock, call, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -28,25 +28,19 @@ def _empty_update() -> TelegramUpdate:
 
 class TestRoute:
     @patch("hrse.telegram.router.handle_health")
-    def test_health_command_dispatches_to_handle_health(
-        self, mock_health: MagicMock
-    ) -> None:
+    def test_health_command_dispatches_to_handle_health(self, mock_health: MagicMock) -> None:
         client = MagicMock()
         route(update=_update("/health", chat_id=55), client=client)
         mock_health.assert_called_once_with(chat_id=55, client=client)
 
     @patch("hrse.telegram.router.handle_unknown")
-    def test_unknown_command_dispatches_to_handle_unknown(
-        self, mock_unknown: MagicMock
-    ) -> None:
+    def test_unknown_command_dispatches_to_handle_unknown(self, mock_unknown: MagicMock) -> None:
         client = MagicMock()
         route(update=_update("/bogus", chat_id=7), client=client)
         mock_unknown.assert_called_once_with(chat_id=7, text="/bogus", client=client)
 
     @patch("hrse.telegram.router.handle_unknown")
-    def test_plain_text_dispatches_to_handle_unknown(
-        self, mock_unknown: MagicMock
-    ) -> None:
+    def test_plain_text_dispatches_to_handle_unknown(self, mock_unknown: MagicMock) -> None:
         client = MagicMock()
         route(update=_update("hello world", chat_id=3), client=client)
         mock_unknown.assert_called_once()
@@ -62,9 +56,7 @@ class TestRoute:
         mock_unknown.assert_not_called()
 
     @patch("hrse.telegram.router.handle_health")
-    def test_health_command_with_whitespace_dispatches(
-        self, mock_health: MagicMock
-    ) -> None:
+    def test_health_command_with_whitespace_dispatches(self, mock_health: MagicMock) -> None:
         """Leading/trailing whitespace should not break routing."""
         client = MagicMock()
         route(update=_update("  /health  ", chat_id=1), client=client)

@@ -14,6 +14,7 @@ class TestSettings:
         assert s.schedule_table_name == "hrse-schedules"
         assert s.log_level == "INFO"
         assert s.enable_optimiser is False
+        assert s.telegram_secret_name == "hrse/dev/telegram"
 
     def test_env_override(self, monkeypatch: pytest.MonkeyPatch) -> None:
         monkeypatch.setenv("HRSE_AWS_REGION", "eu-west-1")
