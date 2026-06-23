@@ -32,11 +32,12 @@ from __future__ import annotations
 
 import json
 from functools import lru_cache
+from typing import Any
 
 import boto3
 from aws_lambda_powertools import Logger
 from botocore.exceptions import ClientError
-from typing import Any
+
 from hrse.models.events import Event
 
 logger = Logger(child=True)

@@ -6,14 +6,14 @@ Sprint 2 once the data contracts are finalised.
 
 from __future__ import annotations
 
-from datetime import datetime
+import uuid  # noqa: TCH003 — used in default_factory lambdas at runtime
+from datetime import datetime  # noqa: TCH003 — used as Pydantic field type at runtime
 from enum import StrEnum
-from typing import TYPE_CHECKING, Annotated
+from typing import Annotated
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-if TYPE_CHECKING:
-    import uuid
+from hrse.utils.datetime_utils import utcnow
 
 
 class ScheduleStatus(StrEnum):
@@ -47,7 +47,6 @@ class TimeWindow(BaseModel):
     @field_validator("end")
     @classmethod
     def end_must_be_after_start(cls, v: datetime, info: object) -> datetime:  # noqa: N805
-        # info.data may not have 'start' yet if validation failed before this field
         data = getattr(info, "data", {})
         start = data.get("start")
         if start is not None and v <= start:
@@ -72,14 +71,12 @@ class Resource(BaseModel):
 class Schedule(BaseModel):
     """Root aggregate representing a single scheduling record."""
 
+    model_config = ConfigDict(frozen=False)
+
     id: Annotated[str, Field(default_factory=lambda: str(uuid.uuid4()))]
     household_id: str = Field(..., min_length=1)
     status: ScheduleStatus = ScheduleStatus.PENDING
     window: TimeWindow
     resources: list[Resource] = Field(default_factory=list)
-    created_at: datetime = Field(default_factory=datetime.utcnow)
-    updated_at: datetime = Field(default_factory=datetime.utcnow)
-
-    class Config:
-        # Allow mutation so services can update fields without rebuilding the model
-        frozen = False
+    created_at: datetime = Field(default_factory=utcnow)
+    updated_at: datetime = Field(default_factory=utcnow)
