@@ -2,26 +2,27 @@ default_install_hook_types: [pre-commit]
 
 repos:
   # ---------------------------------------------------------------------------
-  # Ruff — lint + format (replaces flake8, isort, pyupgrade, etc.)
-  # Pinned to match the version in pyproject.toml [tool.ruff]
+  # Ruff — lint + format
+  # Pinned to match pyproject.toml [tool.ruff]
   # ---------------------------------------------------------------------------
   - repo: https://github.com/astral-sh/ruff-pre-commit
     rev: v0.5.4
     hooks:
-      - id: ruff              # lint with auto-fix
+      - id: ruff
         args: [--fix]
-      - id: ruff-format       # format
+      - id: ruff-format
 
   # ---------------------------------------------------------------------------
-  # Mypy — strict type checking
-  # additional_dependencies must list every package mypy needs to resolve
-  # imports inside src/hrse at type-check time.
+  # Mypy — strict type checking on src/hrse only.
+  # Exclude tests: pyproject.toml already sets files=["src/hrse"] but the
+  # mirrors-mypy hook passes changed files explicitly, so we exclude here too.
   # ---------------------------------------------------------------------------
   - repo: https://github.com/pre-commit/mirrors-mypy
     rev: v1.10.1
     hooks:
       - id: mypy
         args: [--config-file=pyproject.toml]
+        exclude: ^tests/
         additional_dependencies:
           - pydantic==2.8.2
           - pydantic-settings==2.3.4
@@ -30,15 +31,16 @@ repos:
           - aws-xray-sdk>=2.15.0
 
   # ---------------------------------------------------------------------------
-  # pytest — full test suite before every commit.
-  # Uses the full path to uv so pre-commit's isolated env can find it.
+  # pytest — runs in the project's uv-managed .venv so hrse is already
+  # installed. language: script points at .venv/Scripts/python (Windows) or
+  # .venv/bin/python (Unix), which has all deps available.
   # ---------------------------------------------------------------------------
   - repo: local
     hooks:
       - id: pytest
         name: pytest
-        entry: C:/Users/porkb/.local/bin/uv.exe run pytest
-        language: system
+        entry: .venv/Scripts/python.exe -m pytest
+        language: script
         pass_filenames: false
         always_run: true
 
@@ -55,8 +57,7 @@ repos:
       - id: check-merge-conflict
 
   # ---------------------------------------------------------------------------
-  # Terraform fmt — uses the antonbabenko pre-commit-terraform repo which
-  # handles tfenv and Windows paths correctly.
+  # Terraform fmt
   # ---------------------------------------------------------------------------
   - repo: https://github.com/antonbabenko/pre-commit-terraform
     rev: v1.92.0
