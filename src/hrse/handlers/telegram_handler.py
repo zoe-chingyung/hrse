@@ -14,22 +14,27 @@ The handler is intentionally thin:
 
 Dependency injection
 --------------------
-The ``_client`` parameter exists solely for testing. Production callers omit
-it; the handler resolves the real client from ``get_telegram_client()``.
+``_client`` and ``_store`` are keyword-only parameters accepted for testing.
+Production callers omit them; the handler resolves real instances from the
+LRU-cached factories.
 """
 
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from aws_lambda_powertools import Logger, Tracer
-from aws_lambda_powertools.utilities.typing import LambdaContext
 from pydantic import ValidationError
 
 from hrse.models.telegram import TelegramUpdate
+from hrse.store.s3_store import get_event_store
 from hrse.telegram.client import TelegramClientProtocol, get_telegram_client
 from hrse.telegram.router import route
+
+if TYPE_CHECKING:
+    from aws_lambda_powertools.utilities.typing import LambdaContext
+    from hrse.store.protocol import EventStore
 
 logger = Logger()
 tracer = Tracer()
@@ -42,6 +47,7 @@ def handler(
     context: LambdaContext,
     *,
     _client: TelegramClientProtocol | None = None,
+    _store: EventStore | None = None,
 ) -> dict[str, Any]:
     """Receive an API Gateway HTTP API event and dispatch to the Telegram router.
 
@@ -49,6 +55,7 @@ def handler(
         event:   API Gateway HTTP API v2 payload.
         context: Lambda runtime context.
         _client: Injected Telegram client (tests only). Production omits this.
+        _store:  Injected event store (tests only). Production omits this.
 
     Returns:
         API Gateway-compatible response with ``statusCode`` 200.
@@ -61,15 +68,14 @@ def handler(
         update = TelegramUpdate.model_validate(payload)
     except (json.JSONDecodeError, ValidationError) as exc:
         logger.warning("Invalid Telegram update payload", extra={"error": str(exc)})
-        # Return 200 so Telegram does not keep retrying a malformed webhook.
         return _ok("invalid payload ignored")
 
     client = _client if _client is not None else get_telegram_client()
+    store = _store if _store is not None else get_event_store()
 
     try:
-        route(update=update, client=client)
+        route(update=update, client=client, store=store)
     except Exception:
-        # Log and swallow — never surface 5xx to Telegram or it will retry.
         logger.exception("Unhandled error while processing Telegram update")
 
     return _ok("ok")

@@ -47,6 +47,13 @@ class Settings(BaseSettings):
         description="Secrets Manager secret name for Telegram credentials",
     )
 
+    # S3 bucket used to persist household activity events.
+    # Bucket is created by Terraform; name follows the pattern hrse-{env}-state.
+    state_bucket_name: str = Field(
+        default="hrse-dev-state",
+        description="S3 bucket name for household event storage",
+    )
+
     # Feature flag: enable experimental optimiser (Sprint 3+)
     enable_optimiser: bool = Field(default=False, description="Enable experimental optimiser")
 

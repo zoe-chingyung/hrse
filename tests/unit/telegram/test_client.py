@@ -12,7 +12,6 @@ import pytest
 
 from hrse.telegram.client import HttpTelegramClient, TelegramApiError, TelegramClientProtocol
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------

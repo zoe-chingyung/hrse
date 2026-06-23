@@ -21,3 +21,8 @@ output "telegram_webhook_url" {
   description = "URL to register with Telegram setWebhook. Format: POST https://api.telegram.org/bot<TOKEN>/setWebhook?url=<this_value>"
   value       = "${aws_apigatewayv2_stage.default.invoke_url}webhook"
 }
+
+output "state_bucket_name" {
+  description = "Name of the S3 bucket used for household event storage."
+  value       = aws_s3_bucket.hrse_state.id
+}

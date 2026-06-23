@@ -14,7 +14,7 @@ Content     : JSON string  ``{"bot_token": "<token>"}``
 from __future__ import annotations
 
 import json
-from typing import Callable
+from collections.abc import Callable
 
 import boto3
 from aws_lambda_powertools import Logger

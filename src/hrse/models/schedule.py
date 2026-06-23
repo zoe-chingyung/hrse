@@ -6,12 +6,14 @@ Sprint 2 once the data contracts are finalised.
 
 from __future__ import annotations
 
-import uuid
 from datetime import datetime
 from enum import StrEnum
-from typing import Annotated
+from typing import TYPE_CHECKING, Annotated
 
 from pydantic import BaseModel, Field, field_validator
+
+if TYPE_CHECKING:
+    import uuid
 
 
 class ScheduleStatus(StrEnum):

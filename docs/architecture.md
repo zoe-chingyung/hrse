@@ -1,7 +1,7 @@
 # HRSE – Architecture
 
-> Status: **Draft** (Sprint 1)  
-> Last updated: 2026-06-22
+> Status: **Draft** (Sprint 2B)
+> Last updated: 2026-06-23
 
 ---
 
@@ -9,29 +9,39 @@
 
 The **Household Resource Scheduling Engine (HRSE)** is a serverless, event-driven system that optimises the allocation of time-bound household resources—appliances, energy slots, and human tasks—across configurable time windows.
 
-It runs entirely on AWS managed services, keeping operational overhead close to zero.
+It runs entirely on AWS managed services, keeping operational overhead close to zero. Users interact via a Telegram bot.
 
 ---
 
 ## 2. High-Level Architecture
 
 ```
-┌─────────────┐     EventBridge      ┌──────────────────────┐
-│  Client /   │  ScheduleRequest  ──▶│  schedule-handler    │
-│  IoT Device │                      │  (AWS Lambda)        │
-└─────────────┘                      └──────────┬───────────┘
-                                                │
-                                    ┌───────────▼───────────┐
-                                    │   ScheduleService     │
-                                    │   (business logic)    │
-                                    └───────────┬───────────┘
-                                                │
-                             ┌──────────────────▼──────────────────┐
-                             │                                     │
-                  ┌──────────▼──────────┐          ┌──────────────▼──────┐
-                  │   DynamoDB          │          │  EventBridge (out)  │
-                  │   (schedule state)  │          │  (downstream events)│
-                  └─────────────────────┘          └─────────────────────┘
+┌──────────────┐   HTTPS POST    ┌──────────────────────┐
+│   Telegram   │ ─── webhook ──▶ │  API Gateway HTTP API │
+│   (user)     │                 │  POST /webhook        │
+└──────────────┘                 └──────────┬────────────┘
+                                            │
+                                 ┌──────────▼────────────┐
+                                 │  telegram-handler     │
+                                 │  (AWS Lambda)         │
+                                 └──────────┬────────────┘
+                                            │ route()
+                              ┌─────────────▼────────────────┐
+                              │  Command Router              │
+                              │  /health /laundry_done       │
+                              │  /events  /summary           │
+                              └──────┬──────────────┬────────┘
+                                     │              │
+                          ┌──────────▼───┐  ┌───────▼────────────┐
+                          │ Commands     │  │ WeeklyStateService  │
+                          │ (reply text) │  │ (aggregation logic) │
+                          └──────────────┘  └───────┬────────────┘
+                                                    │ EventStore Protocol
+                                         ┌──────────▼──────────┐
+                                         │  S3EventStore       │
+                                         │  s3://hrse-{env}-   │
+                                         │  state/events/      │
+                                         └─────────────────────┘
 ```
 
 ---
@@ -40,70 +50,131 @@ It runs entirely on AWS managed services, keeping operational overhead close to 
 
 | Component | Technology | Purpose |
 |---|---|---|
-| `schedule-handler` | AWS Lambda (Python 3.12) | Entry point; validates and routes schedule lifecycle events |
-| Schedule state store | Amazon DynamoDB (on-demand) | Persists schedule records and status transitions |
-| Event bus | Amazon EventBridge | Decouples producers and consumers; drives Lambda triggers |
-| Observability | AWS Lambda Powertools (Logger, Tracer) + CloudWatch | Structured logging and X-Ray tracing |
-| Infrastructure | Terraform | All resources are defined and versioned as code |
+| `telegram-handler` | AWS Lambda (Python 3.12) | Receives webhook, routes commands, sends replies |
+| `schedule-handler` | AWS Lambda (Python 3.12) | EventBridge-driven schedule lifecycle (Sprint 2B+ stub) |
+| API Gateway HTTP API | Amazon API Gateway v2 | Exposes `POST /webhook` to Telegram |
+| Event store | Amazon S3 | Persists household activity events as JSON |
+| Secrets | AWS Secrets Manager | Stores Telegram bot token (`hrse/{env}/telegram`) |
+| Observability | Lambda Powertools + CloudWatch | Structured logging, X-Ray tracing |
+| Infrastructure | Terraform | All resources versioned as code |
 
 ---
 
-## 4. Data Flow
+## 4. Event Memory Layer (Sprint 2B)
 
-1. A client or IoT device publishes a `ScheduleRequest` event to the HRSE EventBridge bus.
-2. An EventBridge rule matches the event and triggers `schedule-handler` Lambda.
-3. The handler validates the payload and calls `ScheduleService`.
-4. `ScheduleService` writes/updates the schedule record in DynamoDB.
-5. On significant state transitions, an outbound event is published back to EventBridge for downstream consumers.
+### 4.1 Data Model
+
+```
+Event
+  event_type : str           # e.g. "laundry_completed"
+  timestamp  : datetime UTC
+
+WeeklySummary
+  laundry_count           : int
+  last_laundry_timestamp  : datetime | None
+  total_events            : int
+```
+
+### 4.2 Storage Layout
+
+```
+s3://hrse-{environment}-state/
+└── events/
+    └── household_events.json   # JSON array, oldest-first
+```
+
+Example object content:
+```json
+[
+  {"event_type": "laundry_completed", "timestamp": "2026-06-23T18:30:00Z"}
+]
+```
+
+### 4.3 EventStore Protocol
+
+All application code depends only on the `EventStore` Protocol:
+
+```python
+class EventStore(Protocol):
+    def append_event(self, event: Event) -> None: ...
+    def list_events(self) -> list[Event]: ...
+```
+
+`S3EventStore` is the production backend. Any class satisfying the Protocol can replace it (DynamoDB, local file, in-memory stub) without changing command handlers or services.
+
+### 4.4 Week Definition
+
+Monday 00:00:00 UTC (inclusive) → Sunday 23:59:59 UTC (inclusive), per ISO 8601.
+
+### 4.5 Telegram Commands
+
+| Command | Behaviour |
+|---|---|
+| `/health` | Returns service version and status |
+| `/laundry_done` | Records `laundry_completed` event; confirms with weekly count |
+| `/events` | Lists up to 10 most recent events, newest first |
+| `/summary` | Shows weekly laundry count, last date, total events |
 
 ---
 
-## 5. Deployment Topology
+## 5. Data Flow — `/laundry_done`
 
-| Environment | AWS Account strategy | State backend |
+1. User sends `/laundry_done` to Telegram bot.
+2. Telegram POSTs the Update JSON to the API Gateway webhook URL.
+3. API Gateway invokes `telegram-handler` Lambda.
+4. Handler parses body → `TelegramUpdate`, passes to `router.route()`.
+5. Router dispatches to `handle_laundry_done(chat_id, client, store)`.
+6. `handle_laundry_done` creates `Event(event_type="laundry_completed")`.
+7. `S3EventStore.append_event` downloads current JSON, appends, uploads.
+8. `WeeklyStateService.get_summary` loads events, counts this week's laundry.
+9. Reply is sent to Telegram via `HttpTelegramClient.send_message`.
+10. Handler returns `{"statusCode": 200}` — Telegram acknowledges receipt.
+
+---
+
+## 6. Deployment Topology
+
+| Environment | AWS Account strategy | Terraform state |
 |---|---|---|
-| `dev` | Shared dev account | S3 + DynamoDB lock |
+| `dev` | Shared dev account | Local / S3 backend (commented out) |
 | `staging` | Shared staging account | S3 + DynamoDB lock |
 | `prod` | Dedicated production account | S3 + DynamoDB lock |
 
-All environments are deployed from the same Terraform root module, parameterised by the `environment` variable.
+---
+
+## 7. Security Considerations
+
+- Lambda execution roles follow least-privilege:
+  - Telegram Lambda: `secretsmanager:GetSecretValue`, `s3:GetObject`, `s3:PutObject`, `s3:ListBucket` on the state bucket only.
+- S3 state bucket: versioning enabled, AES256 encryption at rest, all public access blocked.
+- Telegram bot token stored in Secrets Manager, fetched at cold-start, cached in-process.
+- `log_event=False` on the Telegram handler to avoid logging webhook payloads.
 
 ---
 
-## 6. Security Considerations
+## 8. Observability
 
-- Lambda execution roles follow least-privilege: each function gets only the DynamoDB and EventBridge permissions it needs.
-- Secrets (e.g., API keys) are stored in AWS Secrets Manager and injected at runtime — never in environment variables or source control.
-- All data in transit uses TLS; DynamoDB tables are encrypted at rest with AWS-managed keys (can be upgraded to CMK in prod).
-- IAM permission boundaries will be applied to all roles in the `prod` account.
-
----
-
-## 7. Observability
-
-- **Structured logging**: Lambda Powertools JSON logger with correlation IDs.
-- **Distributed tracing**: AWS X-Ray via Lambda Powertools Tracer.
-- **Metrics**: Lambda Powertools Metrics emits custom CloudWatch metrics per operation.
-- **Alerting**: CloudWatch Alarms on Lambda error rate and duration (configured in Sprint 3).
+- Structured JSON logging via Lambda Powertools with `child=True` loggers.
+- AWS X-Ray tracing on the handler entry point.
+- CloudWatch log groups with 30-day retention (managed by Terraform).
 
 ---
 
-## 8. Key Design Decisions
+## 9. Key Design Decisions
 
 | Decision | Rationale |
 |---|---|
-| Serverless (Lambda) over containers | Zero infrastructure management; pay-per-invocation suits bursty household scheduling workloads |
-| EventBridge as event bus | Native AWS integration; schema registry support for contract enforcement |
-| DynamoDB over RDS | Predictable latency; schedule records map naturally to a key-value model |
-| Python 3.12 | `StrEnum` and improved performance; strong AWS SDK / Powertools support |
-| uv package manager | Fast dependency resolution; reproducible lockfiles; native `pyproject.toml` support |
-| Strict mypy | Catch type errors early; improves maintainability as the codebase grows |
+| `EventStore` as Protocol not ABC | Structural typing — test stubs require no inheritance |
+| S3 JSON array over DynamoDB | Sufficient for v1 event volume; zero table management; human-readable |
+| Read-modify-write on S3 | Simple and correct for single-Lambda concurrency model |
+| `WeeklyStateService` has no AWS deps | Pure date arithmetic — fully testable with an in-memory stub |
+| `store=None` guard in router | Keeps Sprint 2A `/health` path unaffected if store fails to initialise |
+| Strict mypy | Catches type errors early; enforced in CI |
 
 ---
 
-## 9. Open Questions (Sprint 1)
+## 10. Open Questions
 
-- [ ] Define the exact DynamoDB access patterns (PK/SK design, GSIs required).
-- [ ] Decide on EventBridge bus — custom bus vs. default bus.
-- [ ] Confirm whether schedules need a FIFO queue (SQS) in front of Lambda for back-pressure.
-- [ ] Multi-region requirements for `prod`?
+- [ ] Concurrent Lambda invocations could cause S3 write conflicts — evaluate S3 conditional writes or DynamoDB for Sprint 3.
+- [ ] Week definition is fixed to UTC — consider household timezone support.
+- [ ] Should events be partitioned per household ID once multi-household support is needed?

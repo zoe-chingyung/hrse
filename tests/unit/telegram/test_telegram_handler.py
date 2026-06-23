@@ -9,7 +9,6 @@ import pytest
 
 from hrse.handlers.telegram_handler import handler
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -25,10 +24,7 @@ def _context() -> MagicMock:
 
 def _apigw_event(body: dict | None = None, raw_body: str | None = None) -> dict:
     """Build a minimal API Gateway HTTP API v2 event."""
-    if raw_body is not None:
-        serialised = raw_body
-    else:
-        serialised = json.dumps(body or {})
+    serialised = raw_body if raw_body is not None else json.dumps(body or {})
     return {
         "version": "2.0",
         "routeKey": "POST /webhook",

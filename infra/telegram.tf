@@ -64,6 +64,7 @@ module "telegram_lambda" {
   environment_variables = {
     HRSE_AWS_REGION           = "eu-west-2"
     HRSE_TELEGRAM_SECRET_NAME = "hrse/${var.environment}/telegram"
+    HRSE_STATE_BUCKET_NAME    = "hrse-${var.environment}-state"
     HRSE_LOG_LEVEL            = var.log_level
     POWERTOOLS_SERVICE_NAME   = "hrse-telegram-handler"
     POWERTOOLS_LOG_LEVEL      = var.log_level
