@@ -1,8 +1,22 @@
 # Convenience targets. All commands run inside the uv-managed venv.
-.PHONY: install lint fmt fmt-check typecheck test test-unit test-integration clean build-lambda check
+.PHONY: install install-hooks lint fmt fmt-check typecheck test test-unit \
+        test-integration check clean build-lambda
+
+# ---------------------------------------------------------------------------
+# Setup
+# ---------------------------------------------------------------------------
 
 install:
 	uv sync --extra dev
+
+# Install pre-commit hooks into .git/hooks — run once after cloning.
+install-hooks: install
+	uv run pre-commit install
+	uv run pre-commit install --hook-type pre-push
+
+# ---------------------------------------------------------------------------
+# Individual checks (also called by pre-commit and CI)
+# ---------------------------------------------------------------------------
 
 lint:
 	uv run ruff check .
@@ -25,8 +39,17 @@ test-unit:
 test-integration:
 	uv run pytest -m integration
 
-# Run all checks in CI order — must pass before pushing to main
-check: fmt-check lint typecheck test
+# ---------------------------------------------------------------------------
+# Full pre-push gate — mirrors CI and pre-commit in one command.
+# Run this before pushing to main if you want to be sure.
+#   make check
+# ---------------------------------------------------------------------------
+
+check: fmt lint typecheck test
+
+# ---------------------------------------------------------------------------
+# Build / clean
+# ---------------------------------------------------------------------------
 
 # Build a Lambda-ready ZIP (install deps into a staging dir, then zip with src)
 build-lambda:

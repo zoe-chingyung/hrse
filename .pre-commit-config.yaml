@@ -1,0 +1,65 @@
+default_install_hook_types: [pre-commit]
+
+repos:
+  # ---------------------------------------------------------------------------
+  # Ruff — lint + format (replaces flake8, isort, pyupgrade, etc.)
+  # Pinned to match the version in pyproject.toml [tool.ruff]
+  # ---------------------------------------------------------------------------
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.5.4
+    hooks:
+      - id: ruff              # lint with auto-fix
+        args: [--fix]
+      - id: ruff-format       # format
+
+  # ---------------------------------------------------------------------------
+  # Mypy — strict type checking
+  # additional_dependencies must list every package mypy needs to resolve
+  # imports inside src/hrse at type-check time.
+  # ---------------------------------------------------------------------------
+  - repo: https://github.com/pre-commit/mirrors-mypy
+    rev: v1.10.1
+    hooks:
+      - id: mypy
+        args: [--config-file=pyproject.toml]
+        additional_dependencies:
+          - pydantic==2.8.2
+          - pydantic-settings==2.3.4
+          - boto3-stubs[s3,secretsmanager,lambda,dynamodb,events]==1.34.144
+          - aws-lambda-powertools==2.43.0
+          - aws-xray-sdk>=2.15.0
+
+  # ---------------------------------------------------------------------------
+  # pytest — full test suite before every commit.
+  # Uses the full path to uv so pre-commit's isolated env can find it.
+  # ---------------------------------------------------------------------------
+  - repo: local
+    hooks:
+      - id: pytest
+        name: pytest
+        entry: C:/Users/porkb/.local/bin/uv.exe run pytest
+        language: system
+        pass_filenames: false
+        always_run: true
+
+  # ---------------------------------------------------------------------------
+  # General file hygiene
+  # ---------------------------------------------------------------------------
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v4.6.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-toml
+      - id: check-merge-conflict
+
+  # ---------------------------------------------------------------------------
+  # Terraform fmt — uses the antonbabenko pre-commit-terraform repo which
+  # handles tfenv and Windows paths correctly.
+  # ---------------------------------------------------------------------------
+  - repo: https://github.com/antonbabenko/pre-commit-terraform
+    rev: v1.92.0
+    hooks:
+      - id: terraform_fmt
+        args: [--args=-recursive]

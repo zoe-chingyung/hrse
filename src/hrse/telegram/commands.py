@@ -71,7 +71,7 @@ def handle_laundry_done(
     store.append_event(event)
 
     summary = WeeklyStateService(store).get_summary()
-    text = f"🧺 Laundry recorded.\n" f"This week: <b>{summary.laundry_count}</b> completed."
+    text = f"🧺 Laundry recorded.\nThis week: <b>{summary.laundry_count}</b> completed."
     client.send_message(chat_id=chat_id, text=text)
 
 
