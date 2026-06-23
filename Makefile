@@ -1,6 +1,6 @@
 # Convenience targets. All commands run inside the uv-managed venv.
 .PHONY: install install-hooks lint fmt fmt-check typecheck test test-unit \
-        test-integration check clean build-lambda
+				test-integration check clean build-lambda
 
 # ---------------------------------------------------------------------------
 # Setup
@@ -56,8 +56,9 @@ build-lambda:
 	rm -rf lambda_packages/hrse
 	mkdir -p lambda_packages/hrse
 	uv pip install --target lambda_packages/hrse --python-platform linux .
+# 	uv run python -c "import shutil; shutil.make_archive('lambda_packages/hrse', 'zip', 'lambda_packages/hrse')"
 	cd lambda_packages && zip -r hrse.zip hrse/
 
 clean:
 	rm -rf lambda_packages/ .venv/ .mypy_cache/ .ruff_cache/ .pytest_cache/ \
-	       coverage.xml htmlcov/ dist/ build/ src/hrse.egg-info/
+				 coverage.xml htmlcov/ dist/ build/ src/hrse.egg-info/

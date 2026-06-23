@@ -31,12 +31,6 @@ class Settings(BaseSettings):
     # AWS region where resources live
     aws_region: str = Field(default="eu-west-2", description="AWS region")
 
-    # DynamoDB table name for schedule state
-    schedule_table_name: str = Field(
-        default="hrse-schedules",
-        description="DynamoDB table for schedule persistence",
-    )
-
     # Log level forwarded to Lambda Powertools logger
     log_level: str = Field(default="INFO", description="Log level (DEBUG|INFO|WARNING|ERROR)")
 
@@ -53,6 +47,22 @@ class Settings(BaseSettings):
         default="hrse-dev-state",
         description="S3 bucket name for household event storage",
     )
+
+    # Octopus Agile product and regional tariff codes (public API, no key needed).
+    # Default region "-C" is the East Midlands; change the trailing letter for
+    # your grid supply point. See the Octopus product list for current codes.
+    octopus_product_code: str = Field(
+        default="AGILE-FLEX-22-11-25",
+        description="Octopus Agile product code",
+    )
+    octopus_tariff_code: str = Field(
+        default="E-1R-AGILE-FLEX-22-11-25-C",
+        description="Octopus Agile regional tariff code",
+    )
+
+    # Location for weather forecasts (decimal degrees). Defaults to London.
+    weather_latitude: float = Field(default=51.5072, description="Forecast latitude")
+    weather_longitude: float = Field(default=-0.1276, description="Forecast longitude")
 
     # Feature flag: enable experimental optimiser (Sprint 3+)
     enable_optimiser: bool = Field(default=False, description="Enable experimental optimiser")

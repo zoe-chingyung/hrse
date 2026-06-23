@@ -2,7 +2,7 @@
 
 Any class that implements ``append_event`` and ``list_events`` with the
 correct signatures satisfies this Protocol, without inheritance.
-This makes it trivial to substitute a different backend (DynamoDB, local
+This makes it trivial to substitute a different backend (local
 file, in-memory stub) by passing a different object at construction time.
 """
 

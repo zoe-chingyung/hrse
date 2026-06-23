@@ -102,9 +102,6 @@ wheels = [
 ]
 
 [package.optional-dependencies]
-dynamodb = [
-    { name = "mypy-boto3-dynamodb" },
-]
 events = [
     { name = "mypy-boto3-events" },
 ]
@@ -493,7 +490,7 @@ dependencies = [
 
 [package.optional-dependencies]
 dev = [
-    { name = "boto3-stubs", extra = ["dynamodb", "events", "lambda", "s3", "secretsmanager"] },
+    { name = "boto3-stubs", extra = ["events", "lambda", "s3", "secretsmanager"] },
     { name = "moto", extra = ["all"] },
     { name = "mypy" },
     { name = "pre-commit" },
@@ -513,7 +510,7 @@ requires-dist = [
     { name = "aws-lambda-powertools", specifier = "==2.43.0" },
     { name = "aws-xray-sdk", specifier = ">=2.15.0" },
     { name = "boto3", specifier = "==1.34.144" },
-    { name = "boto3-stubs", extras = ["lambda", "s3", "dynamodb", "events", "secretsmanager"], marker = "extra == 'dev'", specifier = "==1.34.144" },
+    { name = "boto3-stubs", extras = ["lambda", "s3", "events", "secretsmanager"], marker = "extra == 'dev'", specifier = "==1.34.144" },
     { name = "moto", extras = ["all"], marker = "extra == 'dev'", specifier = "==5.0.12" },
     { name = "mypy", marker = "extra == 'dev'", specifier = "==1.10.1" },
     { name = "pre-commit", marker = "extra == 'dev'", specifier = ">=3.8.0" },
@@ -840,15 +837,6 @@ wheels = [
     { url = "https://files.pythonhosted.org/packages/02/3c/1f5e57c8cfab4299f7189821ae8bb4896e8e623a04d293fd32e32eb0e617/mypy-1.10.1-cp312-cp312-musllinux_1_1_x86_64.whl", hash = "sha256:701b5f71413f1e9855566a34d6e9d12624e9e0a8818a5704d74d6b0402e66c04", size = 12730251, upload-time = "2024-06-25T00:12:14.738Z" },
     { url = "https://files.pythonhosted.org/packages/f9/20/d33608e8dc3bc0f5966fc1f6c2d16671f0725dcca279beec47c3e19afd9d/mypy-1.10.1-cp312-cp312-win_amd64.whl", hash = "sha256:3c4c2992f6ea46ff7fce0072642cfb62af7a2484efe69017ed8b095f7b39ef31", size = 9491734, upload-time = "2024-06-25T00:11:05.118Z" },
     { url = "https://files.pythonhosted.org/packages/2b/ee/d53a3d4792a09b6cd757978951d6dcf8b10825a8b8522b68e9b5eb53b9a1/mypy-1.10.1-py3-none-any.whl", hash = "sha256:71d8ac0b906354ebda8ef1673e5fde785936ac1f29ff6987c7483cfbd5a4235a", size = 2580108, upload-time = "2024-06-25T00:12:08.18Z" },
-]
-
-[[package]]
-name = "mypy-boto3-dynamodb"
-version = "1.34.148"
-source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/03/8b/79ce3b60d347b3c9a1571b587a36f7c0c042ece1d39377a07cefbf072a4d/mypy_boto3_dynamodb-1.34.148.tar.gz", hash = "sha256:c85489b92cbbbe4f6997070372022df914d4cb8eb707fdc73aa18ce6ba25c578", size = 50077, upload-time = "2024-07-24T19:47:48.859Z" }
-wheels = [
-    { url = "https://files.pythonhosted.org/packages/5d/74/2a13f51997fd06b403e0109ded7976a451b76ef1569b8803b41c6b47139e/mypy_boto3_dynamodb-1.34.148-py3-none-any.whl", hash = "sha256:f1a7aabff5c6e926b9b272df87251c9d6dfceb4c1fb159fb5a2df52062cd7e87", size = 60366, upload-time = "2024-07-24T19:47:42.264Z" },
 ]
 
 [[package]]

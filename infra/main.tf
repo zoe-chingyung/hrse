@@ -68,12 +68,11 @@ module "schedule_lambda" {
   source_code_hash = data.archive_file.lambda_package.output_base64sha256
 
   environment_variables = {
-    HRSE_AWS_REGION          = var.aws_region
-    HRSE_SCHEDULE_TABLE_NAME = "hrse-schedules-${var.environment}"
-    HRSE_LOG_LEVEL           = var.log_level
-    HRSE_ENABLE_OPTIMISER    = "false"
-    POWERTOOLS_SERVICE_NAME  = "hrse-schedule-handler"
-    POWERTOOLS_LOG_LEVEL     = var.log_level
+    HRSE_AWS_REGION         = var.aws_region
+    HRSE_LOG_LEVEL          = var.log_level
+    HRSE_ENABLE_OPTIMISER   = "false"
+    POWERTOOLS_SERVICE_NAME = "hrse-schedule-handler"
+    POWERTOOLS_LOG_LEVEL    = var.log_level
   }
 
   tags = {

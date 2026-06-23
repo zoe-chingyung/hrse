@@ -46,7 +46,7 @@ def handler(event: dict[str, Any], context: LambdaContext) -> dict[str, Any]:
     logger.debug("Settings", extra={"region": settings.aws_region})
 
     # TODO (Sprint 2): parse event.detail into ScheduleRequestEvent,
-    #                  call ScheduleService, persist to DynamoDB.
+    #                  call ScheduleService, persist to S3 event store.
 
     return {
         "statusCode": 200,

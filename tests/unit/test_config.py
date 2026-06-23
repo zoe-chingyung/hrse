@@ -11,7 +11,6 @@ class TestSettings:
     def test_defaults(self) -> None:
         s = Settings()
         assert s.aws_region == "eu-west-2"
-        assert s.schedule_table_name == "hrse-schedules"
         assert s.log_level == "INFO"
         assert s.enable_optimiser is False
         assert s.telegram_secret_name == "hrse/dev/telegram"

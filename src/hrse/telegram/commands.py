@@ -96,7 +96,8 @@ def handle_events(
 
     lines = ["📋 <b>Recent Events</b>"]
     for e in recent:
-        lines.append(f"  • {e.event_type}")
+        ts = e.timestamp.strftime("%Y-%m-%d %H:%M UTC")
+        lines.append(f"  • {ts} — {e.event_type}")
     client.send_message(chat_id=chat_id, text="\n".join(lines))
 
 
