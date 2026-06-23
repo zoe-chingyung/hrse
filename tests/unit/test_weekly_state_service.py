@@ -12,7 +12,6 @@ import pytest
 from hrse.models.events import LAUNDRY_COMPLETED, Event
 from hrse.services.weekly_state import WeeklyStateService
 
-
 # ---------------------------------------------------------------------------
 # In-memory stub — satisfies EventStore Protocol without any AWS
 # ---------------------------------------------------------------------------

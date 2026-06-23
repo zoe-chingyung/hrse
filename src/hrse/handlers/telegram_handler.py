@@ -34,6 +34,7 @@ from hrse.telegram.router import route
 
 if TYPE_CHECKING:
     from aws_lambda_powertools.utilities.typing import LambdaContext
+
     from hrse.store.protocol import EventStore
 
 logger = Logger()

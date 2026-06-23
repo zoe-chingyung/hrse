@@ -5,7 +5,7 @@ Sprint 2B — Event Memory Layer.
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime  # noqa: TCH003 — used as Pydantic field type at runtime
 
 from pydantic import BaseModel, ConfigDict, Field
 

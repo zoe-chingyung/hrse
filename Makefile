@@ -1,5 +1,5 @@
 # Convenience targets. All commands run inside the uv-managed venv.
-.PHONY: install lint fmt typecheck test test-unit test-integration clean build-lambda
+.PHONY: install lint fmt fmt-check typecheck test test-unit test-integration clean build-lambda check
 
 install:
 	uv sync --extra dev
@@ -24,6 +24,9 @@ test-unit:
 
 test-integration:
 	uv run pytest -m integration
+
+# Run all checks in CI order — must pass before pushing to main
+check: fmt-check lint typecheck test
 
 # Build a Lambda-ready ZIP (install deps into a staging dir, then zip with src)
 build-lambda:

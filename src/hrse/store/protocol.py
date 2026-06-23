@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from typing import Protocol, runtime_checkable
 
-from hrse.models.events import Event
+from hrse.models.events import Event  # noqa: TCH001 — used in Protocol method signatures at runtime
 
 
 @runtime_checkable

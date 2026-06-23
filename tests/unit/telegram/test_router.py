@@ -13,7 +13,6 @@ import pytest
 from hrse.models.telegram import TelegramChat, TelegramMessage, TelegramUpdate, TelegramUser
 from hrse.telegram.router import route
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

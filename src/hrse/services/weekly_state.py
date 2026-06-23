@@ -18,7 +18,9 @@ from datetime import UTC, date, datetime, timedelta
 from aws_lambda_powertools import Logger
 
 from hrse.models.events import LAUNDRY_COMPLETED, Event, WeeklySummary
-from hrse.store.protocol import EventStore
+from hrse.store.protocol import (
+    EventStore,  # noqa: TCH001 — used as constructor type hint at runtime
+)
 
 logger = Logger(child=True)
 
