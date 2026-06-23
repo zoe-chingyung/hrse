@@ -36,7 +36,7 @@ from functools import lru_cache
 import boto3
 from aws_lambda_powertools import Logger
 from botocore.exceptions import ClientError
-
+from typing import Any
 from hrse.models.events import Event
 
 logger = Logger(child=True)
@@ -90,7 +90,7 @@ class S3EventStore:
         """Download and deserialise the events JSON from S3."""
         try:
             response = self._client.get_object(Bucket=self._bucket, Key=_EVENTS_KEY)
-            raw: list[dict] = json.loads(response["Body"].read())
+            raw: list[dict[str, Any]] = json.loads(response["Body"].read())
             return [Event.model_validate(item) for item in raw]
         except ClientError as exc:
             if exc.response["Error"]["Code"] == "NoSuchKey":
