@@ -1,172 +1,158 @@
-# HRSE – Requirements
+# HRSE — Requirements
 
-> Status: **Draft** (Sprint 2B)
-> Last updated: 2026-06-23
-
----
-
-## 1. Introduction
-
-### 1.1 Purpose
-
-This document captures the functional and non-functional requirements for the Household Resource Scheduling Engine (HRSE). It is the single source of truth for what the system must do.
-
-### 1.2 Scope
-
-HRSE manages the scheduling lifecycle of household resources within configurable time windows. It does not control physical devices directly; it produces schedules that downstream automation systems can consume.
-
-### 1.3 Definitions
-
-| Term | Definition |
-|---|---|
-| **Schedule** | A record that assigns one or more resources to a time window |
-| **Resource** | A named, typed household entity (appliance, energy slot, person) |
-| **Time window** | A half-open interval `[start, end)` expressed in UTC |
-| **Household** | The top-level organisational unit; one household owns many schedules |
+> Status: **Sprint 4 Complete**
+> Last updated: 2026-06-24
 
 ---
 
-## 2. Stakeholders
+## 1. Vision
 
-| Stakeholder | Role |
-|---|---|
-| Household resident | Submits scheduling requests; consumes optimised schedules |
-| Smart home platform | Publishes resource availability events; subscribes to schedule outputs |
-| Engineering team | Develops and operates HRSE |
+Create a lightweight scheduling engine that helps a household decide **when** to run flexible tasks based on electricity price, weather, and household state. The system provides recommendations — it does not control appliances.
+
+---
+
+## 2. Scope
+
+The MVP supports one task type: **laundry**. The system determines whether laundry should be recommended, the best execution window, and the reasoning behind the recommendation.
+
+### In scope (v1)
+- Laundry task scheduling
+- Octopus Agile electricity price integration
+- Open-Meteo weather forecast integration
+- S3 event sourcing for weekly activity tracking
+- Telegram bot interface (commands + proactive notifications)
+- AWS Lambda + EventBridge + Terraform deployment
+
+### Out of scope (v1)
+- Device control (SmartThings, Home Assistant, smart plugs)
+- AI/LLM decision making
+- Mobile applications (Telegram only)
+- Multi-household / multi-tenant support
+- Real-time pricing streams
 
 ---
 
 ## 3. Functional Requirements
 
-### 3.1 Schedule Management
+### 3.1 Scheduling
 
-| ID | Requirement | Priority |
+| ID | Requirement | Status |
 |---|---|---|
-| FR-01 | The system SHALL accept a `ScheduleRequest` event containing a household ID, desired time window, and list of resources. | Must have |
-| FR-02 | The system SHALL persist each schedule with a unique ID and creation timestamp. | Must have |
-| FR-03 | The system SHALL support the following schedule status transitions: `PENDING → ACTIVE → COMPLETED` and `PENDING → CANCELLED`, `ACTIVE → CANCELLED`. | Must have |
-| FR-04 | The system SHALL reject requests where the time window end is not strictly after the start. | Must have |
-| FR-05 | The system SHALL publish a `ScheduleUpdated` event on every status transition. | Must have |
+| FR-01 | The engine SHALL evaluate whether a laundry run is recommended for a given day. | ✅ Done |
+| FR-02 | The engine SHALL recommend a specific execution window (start + end time). | ✅ Done |
+| FR-03 | The engine SHALL provide human-readable reasons for every verdict (recommended or not). | ✅ Done |
+| FR-04 | The recommended window SHALL consist of `duration_slots` consecutive 30-minute price slots. | ✅ Done |
+| FR-05 | The engine SHALL rank candidate windows by total cost, breaking ties by earliest start. | ✅ Done |
 
-### 3.2 Resource Handling
+### 3.2 Decision Rules
 
-| ID | Requirement | Priority |
+| ID | Rule | Status |
 |---|---|---|
-| FR-06 | The system SHALL support three resource types: `APPLIANCE`, `ENERGY_SLOT`, `PERSON`. | Must have |
-| FR-07 | A resource MUST have a non-empty name of at most 128 characters. | Must have |
-| FR-08 | The system SHOULD detect resource conflicts within overlapping time windows and surface a conflict reason. | Should have |
+| FR-10 | If the weekly laundry target is already met, do not recommend. | ✅ Done |
+| FR-11 | Only recommend when the day's UV index is strictly above `min_uv`. | ✅ Done |
+| FR-12 | Only recommend when the day's rain probability is strictly below `max_rain_probability`. | ✅ Done |
+| FR-13 | Candidate windows must fall entirely within `earliest_start`–`latest_finish`. | ✅ Done |
+| FR-14 | All slots in a candidate window must be strictly below `max_price` (pence/kWh). | ✅ Done |
 
-### 3.3 Optimisation (Sprint 3+)
+### 3.3 Data Collection
 
-| ID | Requirement | Priority |
+| ID | Requirement | Status |
 |---|---|---|
-| FR-09 | When the `enable_optimiser` flag is `true`, the system SHOULD reorder resource assignments to minimise energy cost based on tariff data. | Should have |
-| FR-10 | The optimiser MUST complete within the Lambda timeout (30 s) for schedules with up to 50 resources. | Must have (when FR-09 implemented) |
+| FR-20 | The system SHALL fetch Octopus Agile half-hourly prices (pence/kWh inc. VAT) for the target day. | ✅ Done |
+| FR-21 | The system SHALL fetch a daily weather summary (UV index, rain probability, max temp) for the target day. | ✅ Done |
+| FR-22 | Price and weather clients SHALL use no API keys where possible (Octopus public endpoint, Open-Meteo free tier). | ✅ Done |
+
+### 3.4 Event Memory
+
+| ID | Requirement | Status |
+|---|---|---|
+| FR-30 | The system SHALL record a `laundry_completed` event when a user sends `/laundry_done`. | ✅ Done |
+| FR-31 | Events SHALL be persisted to S3 as a JSON array and survive Lambda restarts. | ✅ Done |
+| FR-32 | The `/events` command SHALL return the 10 most recent events with timestamps. | ✅ Done |
+| FR-33 | The `/summary` command SHALL return the weekly laundry count and last completion time. | ✅ Done |
+| FR-34 | The week definition SHALL be Monday 00:00 UTC → Sunday 23:59 UTC (ISO 8601). | ✅ Done |
+
+### 3.5 Notifications
+
+| ID | Requirement | Status |
+|---|---|---|
+| FR-40 | The system SHALL send a daily planning notification at 16:45 UTC with tomorrow's recommendation. | ✅ Done |
+| FR-41 | The system SHALL send a morning reminder at 08:00 UTC with today's recommendation. | ✅ Done |
+| FR-42 | The morning reminder SHALL re-evaluate prices (Agile may have repriced overnight). | ✅ Done |
+| FR-43 | A recommended notification SHALL include the window, expected price, and reasons. | ✅ Done |
+| FR-44 | A not-recommended notification SHALL include the reasons for declining. | ✅ Done |
+
+### 3.6 Telegram Interface
+
+| ID | Requirement | Status |
+|---|---|---|
+| FR-50 | `/health` SHALL return service version and status. | ✅ Done |
+| FR-51 | `/laundry_done` SHALL record an event and confirm with this week's count. | ✅ Done |
+| FR-52 | `/events` SHALL list recent events with timestamps. | ✅ Done |
+| FR-53 | `/summary` SHALL show the weekly activity summary. | ✅ Done |
 
 ---
 
 ## 4. Non-Functional Requirements
 
-### 4.1 Performance
-
-| ID | Requirement |
-|---|---|
-| NFR-01 | End-to-end latency from event receipt to DynamoDB write MUST be < 500 ms at p99 under normal load. |
-| NFR-02 | The system MUST handle at least 100 concurrent scheduling requests without throttling. |
-
-### 4.2 Reliability
-
-| ID | Requirement |
-|---|---|
-| NFR-03 | The system SHALL target 99.9% monthly uptime (≤ 43 min downtime/month). |
-| NFR-04 | Failed Lambda invocations MUST be retried at least twice before routing to a dead-letter queue. |
-
-### 4.3 Security
-
-| ID | Requirement |
-|---|---|
-| NFR-05 | All inter-service communication MUST use TLS 1.2 or higher. |
-| NFR-06 | Lambda execution roles MUST follow least-privilege; no wildcard `*` actions on IAM policies. |
-| NFR-07 | Secrets MUST NOT be stored in environment variables or source control. |
-
-### 4.4 Observability
-
-| ID | Requirement |
-|---|---|
-| NFR-08 | Every Lambda invocation MUST emit a structured JSON log entry including `household_id`, `schedule_id`, and `request_id`. |
-| NFR-09 | All Lambda functions MUST be instrumented with AWS X-Ray tracing. |
-
-### 4.5 Maintainability
-
-| ID | Requirement |
-|---|---|
-| NFR-10 | Test coverage MUST remain above 80% on the `src/hrse` package. |
-| NFR-11 | All Python code MUST pass `mypy --strict` with no errors. |
-| NFR-12 | All Python code MUST pass `ruff check` with no errors. |
-
----
-
-## 5. Constraints
-
-- Runtime: Python 3.12 only.
-- Cloud provider: AWS (no multi-cloud requirement in v1).
-- Infrastructure: Terraform; no CloudFormation or CDK.
-- Package manager: `uv`; no `pip` or `poetry`.
-
----
-
-## 6. Out of Scope (v1)
-
-- Direct device control or integration with smart-home protocols (Z-Wave, Zigbee, Matter).
-- Mobile or web front-end.
-- Multi-tenant SaaS model (single household per deployment in v1).
-- Real-time streaming (Kinesis); EventBridge is sufficient for v1 throughput.
-
----
-
-## 7. Open Questions
-
-- [ ] What is the maximum number of resources per schedule? (Informs DynamoDB item size and optimiser complexity.)
-- [ ] Should `ScheduleRequest` events include a priority field for conflict resolution?
-- [ ] Who owns tariff data for the optimiser — HRSE or an external service?
-
----
-
-## 8. Sprint 2B — Event Memory Layer
-
-### 8.1 Functional Requirements
-
-| ID | Requirement | Priority |
+| ID | Requirement | Status |
 |---|---|---|
-| FR-2B-01 | The system SHALL record a `laundry_completed` event when a user sends `/laundry_done`. | Must have |
-| FR-2B-02 | Each recorded event SHALL include `event_type` (string) and `timestamp` (UTC datetime). | Must have |
-| FR-2B-03 | The system SHALL persist events to Amazon S3 as a JSON array in the bucket `hrse-{env}-state`. | Must have |
-| FR-2B-04 | The `/laundry_done` reply SHALL include the running laundry count for the current ISO week. | Must have |
-| FR-2B-05 | The `/events` command SHALL return up to 10 most recent events, newest first. | Must have |
-| FR-2B-06 | The `/summary` command SHALL return: laundry count, last laundry date, and total events for the current ISO week. | Must have |
-| FR-2B-07 | The week definition SHALL be Monday 00:00 UTC (inclusive) to Sunday 23:59 UTC (inclusive). | Must have |
-| FR-2B-08 | The event store backend SHALL be swappable via the `EventStore` Protocol without changing command handlers. | Must have |
+| NFR-01 | Test coverage SHALL remain above 80% on `src/hrse`. | ✅ 98%+ |
+| NFR-02 | All Python code SHALL pass `mypy --strict`. | ✅ Done |
+| NFR-03 | All Python code SHALL pass `ruff check`. | ✅ Done |
+| NFR-04 | Lambda execution roles SHALL follow least-privilege (no wildcard `*` IAM actions). | ✅ Done |
+| NFR-05 | Secrets SHALL NOT be stored in environment variables or source control. | ✅ Done |
+| NFR-06 | The S3 bucket SHALL have versioning enabled, AES256 encryption, and public access blocked. | ✅ Done |
+| NFR-07 | The system SHALL run unattended for 30 days without manual intervention. | 🔜 Verify in prod |
+| NFR-08 | All Lambda functions SHALL be instrumented with AWS X-Ray tracing. | ✅ Done |
 
-### 8.2 Non-Functional Requirements
+---
 
-| ID | Requirement |
-|---|---|
-| NFR-2B-01 | The S3 state bucket MUST have versioning enabled and all public access blocked. |
-| NFR-2B-02 | The S3 state bucket MUST use AES256 server-side encryption. |
-| NFR-2B-03 | Lambda IAM policy for S3 MUST be least-privilege: `GetObject`, `PutObject` on `events/*` prefix only; `ListBucket` on the bucket. |
-| NFR-2B-04 | `WeeklyStateService` MUST have no direct AWS dependencies — it operates only on the `EventStore` Protocol. |
-| NFR-2B-05 | Test coverage MUST remain above 80% after Sprint 2B additions. |
+## 5. Task Configuration
 
-### 8.3 Constraints
+Default `LaundryTaskConfig` (hardcoded in `schedule_handler.py`, config-driven in future):
 
-- Event storage format is JSON array (human-readable, no schema migration tooling required for v1).
-- Concurrent Lambda invocations writing simultaneously are not supported in v1 (single active invocation assumed).
-- Only the `laundry_completed` event type is implemented in Sprint 2B. Additional event types land in future sprints.
+| Parameter | Default | Meaning |
+|---|---|---|
+| `target_runs_per_week` | `2` | Recommended weekly laundry runs |
+| `duration_slots` | `4` | Run length in 30-min slots (4 = 2 hours) |
+| `earliest_start` | `08:00` | No earlier than 08:00 UTC |
+| `latest_finish` | `22:00` | Must finish by 22:00 UTC |
+| `max_price` | `15.0p` | Only recommend slots below this price |
+| `min_uv` | `3.0` | Only recommend when UV index is above this |
+| `max_rain_probability` | `40%` | Only recommend when rain probability is below this |
 
-### 8.4 Out of Scope (Sprint 2B)
+---
 
-- Octopus Energy integration.
-- Weather data integration.
-- Recommendation logic.
-- Multi-household support.
-- Event deletion or correction.
+## 6. Constraints
+
+- Runtime: Python 3.12
+- Cloud provider: AWS (eu-west-2)
+- Infrastructure: Terraform ≥ 1.8
+- Package manager: `uv`
+- No external HTTP libraries (stdlib `urllib` only)
+- No AI/LLM decision making in the engine
+
+---
+
+## 7. Future Extensibility
+
+The plugin architecture is designed for additional tasks:
+
+```
+LaundryTask       ← implemented
+DishwasherTask    ← planned
+EVChargingTask    ← planned
+CoolingTask       ← planned
+```
+
+Each task will implement the same `FlexibleTask` Protocol: `evaluate()`, `config()`, `recommendation()`. The `DecisionService` will dispatch to the appropriate task based on the event type.
+
+---
+
+## 8. Open Issues
+
+- [ ] S3 read-modify-write has no concurrency control — fix with ETag conditional puts before adding concurrent Lambda invocations.
+- [ ] `LaundryTaskConfig` is hardcoded — make config-driven (S3 JSON or env vars).
+- [ ] Week definition is UTC-fixed — add `HRSE_TIMEZONE` for households in other timezones.
+- [ ] No dead-letter queue on EventBridge rules — add for production reliability.
