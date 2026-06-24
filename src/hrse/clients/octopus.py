@@ -121,8 +121,8 @@ class HttpOctopusClient:
     dependency to the Lambda package.
 
     Args:
-        product_code: Octopus product code, e.g. "AGILE-FLEX-22-11-25".
-        tariff_code:  Regional tariff code, e.g. "E-1R-AGILE-FLEX-22-11-25-C".
+        product_code: Octopus product code, e.g. "AGILE-24-10-01".
+        tariff_code:  Regional tariff code, e.g. "E-1R-AGILE-24-10-01-A".
     """
 
     def __init__(self, product_code: str, tariff_code: str) -> None:

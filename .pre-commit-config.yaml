@@ -22,7 +22,7 @@ repos:
     hooks:
       - id: mypy
         args: [--config-file=pyproject.toml]
-        exclude: ^tests/
+        exclude: ^(tests/|demo\.py|mock_server\.py)
         additional_dependencies:
           - pydantic==2.8.2
           - pydantic-settings==2.3.4

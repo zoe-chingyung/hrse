@@ -52,11 +52,11 @@ class Settings(BaseSettings):
     # Default region "-C" is the East Midlands; change the trailing letter for
     # your grid supply point. See the Octopus product list for current codes.
     octopus_product_code: str = Field(
-        default="AGILE-FLEX-22-11-25",
+        default="AGILE-24-10-01",
         description="Octopus Agile product code",
     )
     octopus_tariff_code: str = Field(
-        default="E-1R-AGILE-FLEX-22-11-25-C",
+        default="E-1R-AGILE-24-10-01-A",
         description="Octopus Agile regional tariff code",
     )
 

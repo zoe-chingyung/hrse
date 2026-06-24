@@ -1,0 +1,1 @@
+{"statusCode": 200, "body": "{\"recommended\": false, \"kind\": \"planning\", \"date\": \"2026-06-25\", \"reasons\": [\"no valid execution window in the allowed time range\"]}"}
