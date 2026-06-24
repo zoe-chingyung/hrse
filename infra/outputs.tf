@@ -26,3 +26,13 @@ output "state_bucket_name" {
   description = "Name of the S3 bucket used for household event storage."
   value       = aws_s3_bucket.hrse_state.id
 }
+
+output "daily_planning_rule_arn" {
+  description = "ARN of the 16:45 UTC EventBridge rule (DailyPlanning)."
+  value       = aws_cloudwatch_event_rule.daily_planning.arn
+}
+
+output "morning_reminder_rule_arn" {
+  description = "ARN of the 08:00 UTC EventBridge rule (MorningReminder)."
+  value       = aws_cloudwatch_event_rule.morning_reminder.arn
+}

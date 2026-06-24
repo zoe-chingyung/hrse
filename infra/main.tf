@@ -2,8 +2,7 @@
 # HRSE – Terraform Root Module
 #
 # Provisions the AWS infrastructure required for the Household Resource
-# Scheduling Engine. Business-logic resources (DynamoDB tables, EventBridge
-# rules, etc.) will be added in Sprint 2.
+# Scheduling Engine.
 ###############################################################################
 
 terraform {
@@ -61,18 +60,20 @@ module "schedule_lambda" {
   source = "./modules/lambda"
 
   function_name    = "hrse-schedule-handler-${var.environment}"
-  description      = "HRSE schedule lifecycle handler"
+  description      = "HRSE scheduled recommendation handler"
   handler          = "hrse.handlers.schedule_handler.handler"
   runtime          = "python3.12"
   filename         = data.archive_file.lambda_package.output_path
   source_code_hash = data.archive_file.lambda_package.output_base64sha256
 
   environment_variables = {
-    HRSE_AWS_REGION         = var.aws_region
-    HRSE_LOG_LEVEL          = var.log_level
-    HRSE_ENABLE_OPTIMISER   = "false"
-    POWERTOOLS_SERVICE_NAME = "hrse-schedule-handler"
-    POWERTOOLS_LOG_LEVEL    = var.log_level
+    HRSE_AWS_REGION           = var.aws_region
+    HRSE_STATE_BUCKET_NAME    = "hrse-${var.environment}-state"
+    HRSE_TELEGRAM_SECRET_NAME = "hrse/${var.environment}/telegram"
+    HRSE_LOG_LEVEL            = var.log_level
+    HRSE_ENABLE_OPTIMISER     = "false"
+    POWERTOOLS_SERVICE_NAME   = "hrse-schedule-handler"
+    POWERTOOLS_LOG_LEVEL      = var.log_level
   }
 
   tags = {

@@ -8,7 +8,8 @@ from hrse.config import Settings, get_settings
 class TestSettings:
     """Settings defaults and env-var overrides."""
 
-    def test_defaults(self) -> None:
+    def test_defaults(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.delenv("HRSE_LOG_LEVEL", raising=False)
         s = Settings()
         assert s.aws_region == "eu-west-2"
         assert s.log_level == "INFO"
