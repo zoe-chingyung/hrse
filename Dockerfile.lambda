@@ -1,0 +1,44 @@
+# HRSE — Lambda builder image
+#
+# Builds the Lambda deployment package using the official AWS Lambda Python 3.12
+# runtime base image. This guarantees the correct Linux ABI and glibc version
+# regardless of host OS (Windows, macOS, Linux all produce identical output).
+#
+# Usage (via docker-compose — preferred):
+#   docker compose run --rm lambda-builder
+#
+# Direct usage:
+#   docker build -f Dockerfile.lambda -t hrse-lambda-builder .
+#   docker run --rm -v $(pwd)/lambda_packages:/out hrse-lambda-builder
+#
+# Output: lambda_packages/hrse/ populated with runtime deps + hrse package.
+# Terraform's archive_file then zips this directory on terraform apply.
+
+FROM public.ecr.aws/lambda/python:3.12
+
+# Install uv into the builder image
+COPY --from=ghcr.io/astral-sh/uv:0.2.33 /uv /usr/local/bin/uv
+
+WORKDIR /build
+
+# Copy dependency manifests
+COPY pyproject.toml uv.lock ./
+
+# Export pinned runtime deps to requirements.txt (no dev, no hashes)
+RUN uv export \
+    --no-dev \
+    --no-emit-project \
+    --no-hashes \
+    --format requirements-txt \
+    --output-file requirements.txt
+
+# Copy source so we can install the hrse package itself
+COPY src/ src/
+
+# The entrypoint script — installs everything into /out (mounted from host)
+# Runs at `docker compose run lambda-builder` time, not at build time,
+# so the output directory is always fresh.
+COPY scripts/build_lambda.sh /build_lambda.sh
+RUN chmod +x /build_lambda.sh
+
+ENTRYPOINT ["/build_lambda.sh"]

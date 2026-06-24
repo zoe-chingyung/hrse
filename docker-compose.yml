@@ -1,0 +1,84 @@
+# HRSE — Docker Compose
+#
+# Services:
+#   test           — run the full test suite
+#   lint           — ruff check + ruff format --check
+#   typecheck      — mypy strict
+#   dev            — interactive shell in the dev image
+#   demo           — run demo.py against live APIs (requires .env)
+#   mock-server    — start the local mock API server on port 8080
+#   lambda-builder — build the Lambda deployment package
+#
+# Quick reference:
+#   docker compose run --rm test
+#   docker compose run --rm lint
+#   docker compose run --rm typecheck
+#   docker compose run --rm demo
+#   docker compose up mock-server          # leave running, then:
+#   docker compose run --rm demo --mock    # in another terminal
+#   docker compose run --rm lambda-builder # build Lambda package
+
+services:
+
+  # ---------------------------------------------------------------------------
+  # Dev image — tests, lint, typecheck, demo
+  # ---------------------------------------------------------------------------
+
+  test:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["uv", "run", "pytest"]
+    environment:
+      - AWS_ACCESS_KEY_ID=testing
+      - AWS_SECRET_ACCESS_KEY=testing
+      - AWS_DEFAULT_REGION=eu-west-2
+
+  lint:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["sh", "-c", "uv run ruff check . && uv run ruff format --check ."]
+
+  typecheck:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["uv", "run", "mypy"]
+
+  dev:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["bash"]
+    stdin_open: true
+    tty: true
+    volumes:
+      - .:/app  # live-reload source changes
+
+  demo:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["uv", "run", "python", "demo.py"]
+    env_file:
+      - .env
+
+  mock-server:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    command: ["uv", "run", "python", "mock_server.py"]
+    ports:
+      - "8080:8080"
+
+  # ---------------------------------------------------------------------------
+  # Lambda builder — produces lambda_packages/hrse/ with correct Linux wheels
+  # ---------------------------------------------------------------------------
+
+  lambda-builder:
+    build:
+      context: .
+      dockerfile: Dockerfile.lambda
+    volumes:
+      - ./lambda_packages/hrse:/out

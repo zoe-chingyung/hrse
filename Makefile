@@ -99,3 +99,36 @@ plan: build-lambda
 clean:
 	rm -rf lambda_packages/ .venv/ .mypy_cache/ .ruff_cache/ .pytest_cache/ \
 	       coverage.xml htmlcov/ dist/ build/ src/hrse.egg-info/
+
+# ---------------------------------------------------------------------------
+# Docker targets
+# ---------------------------------------------------------------------------
+
+# Build both Docker images
+docker-build:
+	docker compose build
+
+# Run full test suite inside Docker (no local Python needed)
+docker-test:
+	docker compose run --rm test
+
+# Lint inside Docker
+docker-lint:
+	docker compose run --rm lint
+
+# Typecheck inside Docker
+docker-typecheck:
+	docker compose run --rm typecheck
+
+# Full quality gate inside Docker — mirrors CI
+docker-check: docker-lint docker-typecheck docker-test
+
+# Build Lambda package using the Lambda builder image (correct Linux wheels)
+# This replaces `make build-lambda` on Windows — use this instead.
+docker-build-lambda:
+	mkdir -p lambda_packages/hrse
+	docker compose run --rm lambda-builder
+
+# Build Lambda package then deploy via Terraform
+docker-deploy: docker-build-lambda
+	cd infra && terraform apply -var environment=$(ENV)
