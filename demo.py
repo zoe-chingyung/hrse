@@ -109,8 +109,12 @@ def main() -> None:
     cheapest = min(prices, key=lambda p: p.price_pence)
     dearest = max(prices, key=lambda p: p.price_pence)
     print(f"\nPrices: {len(prices)} half-hour slots")
-    print(f"  cheapest: {cheapest.price_pence:.2f}p at {cheapest.timestamp:%H:%M} UTC")
-    print(f"  dearest:  {dearest.price_pence:.2f}p at {dearest.timestamp:%H:%M} UTC")
+    print(
+        f"  cheapest: {cheapest.price_pence:.2f}p at {cheapest.timestamp:%H:%M} UTC  ({(cheapest.timestamp.hour+1)%24:02d}:{cheapest.timestamp.minute:02d} BST)"
+    )
+    print(
+        f"  dearest:  {dearest.price_pence:.2f}p at {dearest.timestamp:%H:%M} UTC  ({(dearest.timestamp.hour+1)%24:02d}:{dearest.timestamp.minute:02d} BST)"
+    )
 
     # Fetch weather
     try:
@@ -141,8 +145,12 @@ def main() -> None:
     print("\n" + "-" * 60)
     if rec.recommended and rec.window is not None:
         print("✅ RECOMMENDED: run laundry")
-        print(f"   window: {rec.window.start:%H:%M} – {rec.window.end:%H:%M} UTC")
-        print(f"   expected price: {rec.expected_price_pence}p/kWh")
+        bst_start = (rec.window.start.hour + 1) % 24
+        bst_end = (rec.window.end.hour + 1) % 24
+        print(
+            f"   window: {rec.window.start:%H:%M}–{rec.window.end:%H:%M} UTC  ({bst_start:02d}:{rec.window.start.minute:02d}–{bst_end:02d}:{rec.window.end.minute:02d} BST)"
+        )
+        print(f"   estimated wash cost: {rec.expected_price_pence}p total")
         print("   reasons:")
         for r in rec.reasons:
             print(f"     ✓ {r}")
