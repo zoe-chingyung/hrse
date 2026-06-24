@@ -50,7 +50,8 @@ def _config(**overrides: object) -> LaundryTaskConfig:
         "duration_slots": 2,  # 1 hour, keeps fixtures short
         "earliest_start": "08:00",
         "latest_finish": "22:00",
-        "max_price": 15.0,
+        "wash_budget_pence": 30.0,  # threshold = 30/1.5 = 20p/kWh
+        "machine_kwh": 1.5,
         "min_uv": 5.0,
         "max_rain_probability": 20,
     }
@@ -182,29 +183,32 @@ class TestRule2ValidWindows:
 @pytest.mark.unit()
 class TestRule3Price:
     def test_all_slots_above_threshold_not_recommended(self) -> None:
+        # avg=25p, machine_kwh=1.5 → cost=37.5p > budget=30p → not recommended
         rec = DecisionService().evaluate(
-            _summary(0), _slots(13, 0, [20.0, 20.0]), _forecast(), _config(max_price=15.0)
+            _summary(0), _slots(13, 0, [25.0, 25.0]), _forecast(), _config()
         )
         assert rec.recommended is False
-        assert any("threshold" in r.lower() for r in rec.reasons)
+        assert any("budget" in r.lower() for r in rec.reasons)
 
-    def test_one_slot_above_threshold_disqualifies_window(self) -> None:
-        """A window is only valid if EVERY slot is under the cap."""
+    def test_high_avg_cost_disqualifies_window(self) -> None:
+        """avg([22, 22]) = 22p >= threshold 20p → not recommended."""
         rec = DecisionService().evaluate(
-            _summary(0), _slots(13, 0, [5.0, 20.0]), _forecast(), _config(max_price=15.0)
-        )
-        assert rec.recommended is False
-
-    def test_price_exactly_at_threshold_fails(self) -> None:
-        """max_price is strict: price == max must fail."""
-        rec = DecisionService().evaluate(
-            _summary(0), _slots(13, 0, [15.0, 15.0]), _forecast(), _config(max_price=15.0)
+            _summary(0), _slots(13, 0, [22.0, 22.0]), _forecast(), _config()
         )
         assert rec.recommended is False
 
-    def test_price_just_below_threshold_passes(self) -> None:
+    def test_avg_exactly_at_threshold_fails(self) -> None:
+        """Threshold is strict <: avg == threshold must fail."""
+        # threshold = 30/1.5 = 20.0; avg=20.0 must fail
         rec = DecisionService().evaluate(
-            _summary(0), _slots(13, 0, [14.9, 14.9]), _forecast(), _config(max_price=15.0)
+            _summary(0), _slots(13, 0, [20.0, 20.0]), _forecast(), _config()
+        )
+        assert rec.recommended is False
+
+    def test_avg_just_below_threshold_passes(self) -> None:
+        # threshold=20p; avg=19.9 < 20 → recommended
+        rec = DecisionService().evaluate(
+            _summary(0), _slots(13, 0, [19.9, 19.9]), _forecast(), _config()
         )
         assert rec.recommended is True
 
@@ -223,7 +227,7 @@ class TestRule5Ranking:
         assert rec.recommended is True
         assert rec.window is not None
         assert rec.window.start.hour == 13
-        assert rec.expected_price_pence == 3.0
+        assert rec.expected_price_pence == 4.5  # avg 3.0p/kWh × 1.5 kWh
 
     def test_tie_broken_by_earliest_start(self) -> None:
         # Two windows both cost 8; the earlier (09:00) should win.
@@ -242,7 +246,7 @@ class TestRule5Ranking:
         assert rec.window is not None
         assert rec.window.start.hour == 13
         assert rec.window.start.minute == 30
-        assert rec.expected_price_pence == 1.0
+        assert rec.expected_price_pence == 1.5  # avg 1.0p/kWh × 1.5 kWh
 
 
 # ---------------------------------------------------------------------------
@@ -261,7 +265,7 @@ class TestHappyPath:
         assert rec.window is not None
         assert rec.window.start == datetime(2026, 6, 23, 13, 0, tzinfo=UTC)
         assert rec.window.end == datetime(2026, 6, 23, 14, 0, tzinfo=UTC)
-        assert rec.expected_price_pence == 8.4  # (8.0 + 8.8) / 2
+        assert rec.expected_price_pence == 12.6  # avg 8.4p/kWh × 1.5 kWh
         assert len(rec.reasons) == 4
 
     def test_longer_duration_window(self) -> None:

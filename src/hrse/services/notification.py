@@ -61,7 +61,7 @@ class NotificationService:
                 f"🕐 Best window: " f"{rec.window.start:%H:%M} – {rec.window.end:%H:%M} UTC"
             )
             if rec.expected_price_pence is not None:
-                lines.append(f"⚡ Expected price: {rec.expected_price_pence}p/kWh")
+                lines.append(f"⚡ Estimated wash cost: {rec.expected_price_pence}p")
             lines.append("")
             lines.append("<b>Reasons:</b>")
             for r in rec.reasons:
@@ -86,7 +86,7 @@ class NotificationService:
             lines.append("👕 Time to run laundry!")
             lines.append(f"🕐 Window: " f"{rec.window.start:%H:%M} – {rec.window.end:%H:%M} UTC")
             if rec.expected_price_pence is not None:
-                lines.append(f"⚡ Price: {rec.expected_price_pence}p/kWh")
+                lines.append(f"⚡ Estimated wash cost: {rec.expected_price_pence}p")
             lines.append("")
             lines.append("Reply /laundry_done when finished.")
         else:

@@ -72,7 +72,8 @@ _DEFAULT_CONFIG = LaundryTaskConfig(
     duration_slots=4,  # 4 x 30 min = 2-hour run
     earliest_start="08:00",
     latest_finish="22:00",
-    max_price=15.0,
+    wash_budget_pence=40.0,
+    machine_kwh=1.5,
     min_uv=3.0,
     max_rain_probability=40,
 )

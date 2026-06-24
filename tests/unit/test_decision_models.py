@@ -66,13 +66,13 @@ class TestDailyForecast:
 @pytest.mark.unit()
 class TestLaundryTaskConfig:
     def test_minimal_valid_config(self) -> None:
-        cfg = LaundryTaskConfig(target_runs_per_week=2, max_price=15)
+        cfg = LaundryTaskConfig(target_runs_per_week=2)
         assert cfg.earliest_start == "08:00"
         assert cfg.latest_finish == "22:00"
 
     def test_time_properties_parse(self) -> None:
         cfg = LaundryTaskConfig(
-            target_runs_per_week=2, max_price=15, earliest_start="09:30", latest_finish="21:15"
+            target_runs_per_week=2, earliest_start="09:30", latest_finish="21:15"
         )
         assert cfg.earliest_start_time.hour == 9
         assert cfg.earliest_start_time.minute == 30
@@ -80,32 +80,31 @@ class TestLaundryTaskConfig:
 
     def test_rejects_malformed_time(self) -> None:
         with pytest.raises(ValidationError):
-            LaundryTaskConfig(target_runs_per_week=2, max_price=15, earliest_start="8am")
+            LaundryTaskConfig(target_runs_per_week=2, earliest_start="8am")
 
     def test_rejects_out_of_range_time(self) -> None:
         with pytest.raises(ValidationError):
-            LaundryTaskConfig(target_runs_per_week=2, max_price=15, earliest_start="25:00")
+            LaundryTaskConfig(target_runs_per_week=2, earliest_start="25:00")
 
     def test_rejects_finish_before_start(self) -> None:
         with pytest.raises(ValidationError):
             LaundryTaskConfig(
                 target_runs_per_week=2,
-                max_price=15,
                 earliest_start="22:00",
                 latest_finish="08:00",
             )
 
     def test_rejects_zero_target(self) -> None:
         with pytest.raises(ValidationError):
-            LaundryTaskConfig(target_runs_per_week=0, max_price=15)
+            LaundryTaskConfig(target_runs_per_week=0)
 
     def test_default_duration_is_four_slots(self) -> None:
-        cfg = LaundryTaskConfig(target_runs_per_week=2, max_price=15)
+        cfg = LaundryTaskConfig(target_runs_per_week=2)
         assert cfg.duration_slots == 4
 
     def test_rejects_zero_duration(self) -> None:
         with pytest.raises(ValidationError):
-            LaundryTaskConfig(target_runs_per_week=2, max_price=15, duration_slots=0)
+            LaundryTaskConfig(target_runs_per_week=2, duration_slots=0)
 
 
 @pytest.mark.unit()
