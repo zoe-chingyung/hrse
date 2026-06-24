@@ -4,35 +4,33 @@
 # NOT used for Lambda deployment (see Dockerfile.lambda for that).
 #
 # Usage:
-#   docker build -t hrse-dev .
-#   docker run --rm hrse-dev pytest
-#   docker run --rm --env-file .env hrse-dev python demo.py
+#   docker compose run --rm test
+#   docker compose run --rm lint
+#   docker compose run --rm demo
 
 FROM python:3.12-slim
 
-# System deps — curl for healthchecks, git for pre-commit
+# System deps — git for pre-commit
 RUN apt-get update \
-    && apt-get install -y --no-install-recommends curl git \
+    && apt-get install -y --no-install-recommends git \
     && rm -rf /var/lib/apt/lists/*
 
-# Install uv — fast Python package manager
-COPY --from=ghcr.io/astral-sh/uv:0.2.33 /uv /usr/local/bin/uv
+# Install uv
+COPY --from=ghcr.io/astral-sh/uv:0.11.23 /uv /usr/local/bin/uv
 
 WORKDIR /app
 
-# Copy dependency manifests first (better layer caching)
-COPY pyproject.toml uv.lock ./
+# Copy dependency manifests first (better layer caching —
+# only reruns on pyproject.toml / uv.lock changes)
+COPY pyproject.toml uv.lock README.md ./
 
-# Install all deps including dev (cached layer — only reruns on pyproject.toml change)
+# Install all deps including dev
 RUN uv sync --extra dev --frozen
 
 # Copy source
 COPY src/ src/
 COPY tests/ tests/
 COPY demo.py mock_server.py ./
-
-# Install the hrse package itself in editable mode
-RUN uv pip install -e . --no-deps
 
 # Default: run the full test suite
 CMD ["uv", "run", "pytest"]
