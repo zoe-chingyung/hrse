@@ -142,8 +142,9 @@ class TestSecretsManagerChatIdProvider:
 class TestNotificationServicePlanning:
     def test_recommended_contains_window(self) -> None:
         msg = NotificationService().format(_rec_yes(), NotificationKind.PLANNING)
-        assert "13:00" in msg
-        assert "15:00" in msg
+        assert "14:00" in msg  # 13:00 UTC = 14:00 BST
+        assert "16:00" in msg  # 15:00 UTC = 16:00 BST
+        assert "BST" in msg
 
     def test_recommended_contains_price(self) -> None:
         msg = NotificationService().format(_rec_yes(), NotificationKind.PLANNING)
@@ -181,8 +182,9 @@ class TestNotificationServicePlanning:
 class TestNotificationServiceReminder:
     def test_recommended_contains_window(self) -> None:
         msg = NotificationService().format(_rec_yes(), NotificationKind.REMINDER)
-        assert "13:00" in msg
-        assert "15:00" in msg
+        assert "14:00" in msg  # 13:00 UTC = 14:00 BST
+        assert "16:00" in msg  # 15:00 UTC = 16:00 BST
+        assert "BST" in msg
 
     def test_recommended_prompts_laundry_done(self) -> None:
         msg = NotificationService().format(_rec_yes(), NotificationKind.REMINDER)

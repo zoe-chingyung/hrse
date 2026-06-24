@@ -258,8 +258,8 @@ All variables use the `HRSE_` prefix. See `.env.example` for a complete template
 | `HRSE_AWS_REGION` | `eu-west-2` | AWS region |
 | `HRSE_STATE_BUCKET_NAME` | `hrse-dev-state` | S3 bucket for household event storage |
 | `HRSE_TELEGRAM_SECRET_NAME` | `hrse/dev/telegram` | Secrets Manager secret (bot_token + chat_id) |
-| `HRSE_OCTOPUS_PRODUCT_CODE` | `AGILE-FLEX-22-11-25` | Octopus Agile product code |
-| `HRSE_OCTOPUS_TARIFF_CODE` | `E-1R-AGILE-FLEX-22-11-25-C` | Octopus regional tariff code (change trailing letter for your region) |
+| `HRSE_OCTOPUS_PRODUCT_CODE` | `AGILE-24-10-01` | Octopus Agile product code |
+| `HRSE_OCTOPUS_TARIFF_CODE` | `E-1R-AGILE-24-10-01-A` | Octopus regional tariff code (change trailing letter for your region) |
 | `HRSE_WEATHER_LATITUDE` | `51.5072` | Forecast latitude (default: London) |
 | `HRSE_WEATHER_LONGITUDE` | `-0.1276` | Forecast longitude (default: London) |
 | `HRSE_ENABLE_OPTIMISER` | `false` | Feature flag (reserved for future use) |

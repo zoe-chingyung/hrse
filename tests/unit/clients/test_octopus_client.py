@@ -58,8 +58,8 @@ def _fake_response(payload: dict[str, Any]) -> io.BytesIO:
 
 def _client() -> HttpOctopusClient:
     return HttpOctopusClient(
-        product_code="AGILE-FLEX-22-11-25",
-        tariff_code="E-1R-AGILE-FLEX-22-11-25-C",
+        product_code="AGILE-24-10-01",
+        tariff_code="E-1R-AGILE-24-10-01-A",
     )
 
 
@@ -145,8 +145,8 @@ class TestHttpOctopusClientRequest:
 
         request = fake_open.call_args.args[0]
         url = request.full_url
-        assert "/v1/products/AGILE-FLEX-22-11-25/electricity-tariffs/" in url
-        assert "E-1R-AGILE-FLEX-22-11-25-C/standard-unit-rates/" in url
+        assert "/v1/products/AGILE-24-10-01/electricity-tariffs/" in url
+        assert "E-1R-AGILE-24-10-01-A/standard-unit-rates/" in url
         assert "period_from=2026-06-23T00%3A00%3A00.000Z" in url
         assert "period_to=2026-06-24T00%3A00%3A00.000Z" in url
         assert request.method == "GET"

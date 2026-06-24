@@ -48,8 +48,12 @@ class LaundryTaskConfig(BaseModel):
                                 30-minute slots (4 = 2 hours).
         earliest_start:         Earliest acceptable start time, ``HH:MM`` (24h).
         latest_finish:          Latest acceptable finish time, ``HH:MM`` (24h).
-        max_price:              Only recommend slots strictly below this price
-                                (pence/kWh).
+        wash_budget_pence:      Maximum acceptable total spend per wash cycle in
+                                pence. Engine recommends windows where
+                                avg_price * machine_kwh < wash_budget_pence.
+        machine_kwh:            Energy consumed per wash cycle in kWh (total,
+                                not power draw). Typical range 1.0–2.0; default
+                                1.5 kWh for a standard 40°C cotton cycle.
         min_uv:                 Only recommend slots when the day's UV index is
                                 strictly above this value.
         max_rain_probability:   Only recommend slots when the day's rain
@@ -66,7 +70,16 @@ class LaundryTaskConfig(BaseModel):
     )
     earliest_start: str = Field(default="08:00", description="Earliest start time, HH:MM")
     latest_finish: str = Field(default="22:00", description="Latest finish time, HH:MM")
-    max_price: float = Field(..., description="Upper price threshold in pence/kWh")
+    wash_budget_pence: float = Field(
+        default=40.0,
+        gt=0,
+        description="Max spend per wash cycle in pence (default 40p ≈ 40°C cotton wash)",
+    )
+    machine_kwh: float = Field(
+        default=1.5,
+        gt=0,
+        description="Energy per wash cycle in kWh (1.0–2.0 typical; default 1.5)",
+    )
     min_uv: float = Field(default=0.0, ge=0, description="Lower UV threshold")
     max_rain_probability: int = Field(
         default=100, ge=0, le=100, description="Upper rain probability threshold (percent)"

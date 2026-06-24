@@ -14,11 +14,18 @@ Two kinds of notification (matching the requirements doc):
 
 from __future__ import annotations
 
+from datetime import datetime, timedelta, timezone
 from enum import Enum
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
     from hrse.models.recommendation import Recommendation
+
+# TODO (future sprint): make timezone a user-configurable parameter collected
+# during onboarding. For now hardcoded to Europe/London BST (UTC+1 in summer).
+# This will break in winter (GMT = UTC+0) until the timezone sprint is done.
+_DISPLAY_TZ = timezone(timedelta(hours=1))  # BST
+_DISPLAY_TZ_LABEL = "BST"
 
 
 class NotificationKind(str, Enum):
@@ -50,6 +57,16 @@ class NotificationService:
     # ------------------------------------------------------------------
 
     @staticmethod
+    def _fmt_window(start: datetime, end: datetime) -> str:
+        """Format a UTC window as 'HH:MM–HH:MM BST (HH:MM–HH:MM UTC)'."""
+        s_local = start.astimezone(_DISPLAY_TZ)
+        e_local = end.astimezone(_DISPLAY_TZ)
+        return (
+            f"{s_local:%H:%M}\u2013{e_local:%H:%M} {_DISPLAY_TZ_LABEL}"
+            f"  ({start:%H:%M}\u2013{end:%H:%M} UTC)"
+        )
+
+    @staticmethod
     def _format_planning(rec: Recommendation) -> str:
         """16:45 message — tomorrow's energy plan."""
         lines = ["🏠 <b>Tomorrow's Energy Plan</b>"]
@@ -58,10 +75,10 @@ class NotificationService:
             lines.append("")
             lines.append("✅ <b>Laundry Recommended</b>")
             lines.append(
-                f"🕐 Best window: " f"{rec.window.start:%H:%M} – {rec.window.end:%H:%M} UTC"
+                f"🕐 Best window: {NotificationService._fmt_window(rec.window.start, rec.window.end)}"
             )
             if rec.expected_price_pence is not None:
-                lines.append(f"⚡ Expected price: {rec.expected_price_pence}p/kWh")
+                lines.append(f"⚡ Estimated wash cost: {rec.expected_price_pence}p")
             lines.append("")
             lines.append("<b>Reasons:</b>")
             for r in rec.reasons:
@@ -84,9 +101,11 @@ class NotificationService:
         if rec.recommended and rec.window is not None:
             lines.append("")
             lines.append("👕 Time to run laundry!")
-            lines.append(f"🕐 Window: " f"{rec.window.start:%H:%M} – {rec.window.end:%H:%M} UTC")
+            lines.append(
+                f"🕐 Window: {NotificationService._fmt_window(rec.window.start, rec.window.end)}"
+            )
             if rec.expected_price_pence is not None:
-                lines.append(f"⚡ Price: {rec.expected_price_pence}p/kWh")
+                lines.append(f"⚡ Estimated wash cost: {rec.expected_price_pence}p")
             lines.append("")
             lines.append("Reply /laundry_done when finished.")
         else:

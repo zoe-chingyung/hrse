@@ -11,8 +11,8 @@ The five rules (Section 10 of the requirements)
 2. Valid windows — build candidate runs of ``duration_slots`` consecutive
                    30-minute slots that fall entirely inside the configured
                    ``earliest_start``..``latest_finish`` window.
-3. Price filter  — keep only candidates where every slot is strictly below
-                   ``max_price``.
+3. Price filter  — keep only candidates where the average slot price satisfies
+                   ``avg_price * machine_kwh < wash_budget_pence``.
 4. Weather filter — gate on the day's forecast: UV strictly above ``min_uv``
                    and rain probability strictly below ``max_rain_probability``.
 5. Rank          — choose the cheapest candidate (lowest total cost), breaking
@@ -106,15 +106,20 @@ class DecisionService:
                 reasons=["no valid execution window in the allowed time range"],
             )
 
-        # Rule 3 — keep only windows fully below the price cap.
-        affordable = [
-            c for c in candidates if all(s.price_pence < config.max_price for s in c.slots)
-        ]
+        # Rule 3 — keep windows where avg price * machine_kwh < wash_budget_pence.
+        # This compares total wash cost against the user's budget rather than
+        # gating on individual slot prices, which is more realistic.
+        price_threshold = config.wash_budget_pence / config.machine_kwh
+        affordable = [c for c in candidates if c.avg_cost < price_threshold]
         if not affordable:
+            est_cost = round(min(c.avg_cost for c in candidates) * config.machine_kwh, 1)
             return Recommendation(
                 task=_TASK,
                 recommended=False,
-                reasons=[f"no window below price threshold ({config.max_price}p/kWh)"],
+                reasons=[
+                    f"cheapest window would cost ~{est_cost}p"
+                    f" vs budget of {config.wash_budget_pence}p"
+                ],
             )
 
         # Rule 5 — rank: cheapest total cost, then earliest start.
@@ -126,7 +131,7 @@ class DecisionService:
         )
         reasons = [
             "laundry target not met",
-            f"electricity below threshold ({config.max_price}p/kWh)",
+            f"wash cost within budget ({config.wash_budget_pence}p)",
             f"UV index above {config.min_uv}",
             f"rain probability below {config.max_rain_probability}%",
         ]
@@ -138,7 +143,7 @@ class DecisionService:
             task=_TASK,
             recommended=True,
             window=window,
-            expected_price_pence=round(best.avg_cost, 2),
+            expected_price_pence=round(best.avg_cost * config.machine_kwh, 1),
             reasons=reasons,
         )
 
