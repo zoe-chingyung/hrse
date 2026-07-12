@@ -129,3 +129,73 @@ class TestHandlerClientResolution:
         ):
             response = handler(_apigw_event(_health_update()), _context())
             assert response["statusCode"] == 200
+
+
+# ---------------------------------------------------------------------------
+# Sprint 6 — end-to-end wiring through the handler
+# ---------------------------------------------------------------------------
+
+
+class TestSprint6Wiring:
+    def test_my_chat_member_join_sends_welcome_with_keyboard(self) -> None:
+        from unittest.mock import MagicMock
+
+        client = MagicMock()
+        event = {
+            "body": json.dumps(
+                {
+                    "update_id": 1,
+                    "my_chat_member": {
+                        "chat": {"id": -100123},
+                        "old_chat_member": {"status": "left"},
+                        "new_chat_member": {"status": "member"},
+                    },
+                }
+            )
+        }
+        response = handler(
+            event,
+            _context(),
+            _client=client,
+            _store=MagicMock(),
+            _settings_store=MagicMock(),
+            _octopus=MagicMock(),
+        )
+        assert response["statusCode"] == 200
+        _, kwargs = client.send_message.call_args
+        assert kwargs["chat_id"] == -100123
+        assert kwargs["reply_markup"] is not None
+
+    def test_language_callback_persists_choice(self) -> None:
+        from unittest.mock import MagicMock
+
+        from hrse.models.chat_settings import Language
+        from hrse.store.chat_settings_store import InMemoryChatSettingsStore
+
+        client = MagicMock()
+        settings_store = InMemoryChatSettingsStore()
+        event = {
+            "body": json.dumps(
+                {
+                    "update_id": 2,
+                    "callback_query": {
+                        "id": "cb-1",
+                        "from": {"id": 42, "is_bot": False, "first_name": "Zoe"},
+                        "message": {"message_id": 5, "chat": {"id": -100123}},
+                        "data": "lang:zh",
+                    },
+                }
+            )
+        }
+        response = handler(
+            event,
+            _context(),
+            _client=client,
+            _store=MagicMock(),
+            _settings_store=settings_store,
+            _octopus=MagicMock(),
+        )
+        assert response["statusCode"] == 200
+        saved = settings_store.get(-100123)
+        assert saved is not None
+        assert saved.language is Language.ZH

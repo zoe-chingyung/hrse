@@ -53,7 +53,7 @@ from hrse.services.notification import NotificationKind, NotificationService
 from hrse.services.weekly_state import WeeklyStateService
 from hrse.store.s3_store import get_event_store
 from hrse.telegram.client import TelegramClientProtocol, get_telegram_client
-from hrse.telegram.token_provider import get_chat_id_provider
+from hrse.telegram.token_provider import get_chat_ids_provider
 
 if TYPE_CHECKING:
     from aws_lambda_powertools.utilities.typing import LambdaContext
@@ -93,17 +93,20 @@ def handler(
     _store: EventStore | None = None,
     _telegram: TelegramClientProtocol | None = None,
     _chat_id: int | None = None,
+    _chat_ids: list[int] | None = None,
 ) -> dict[str, Any]:
     """Fetch data, run the decision engine, send a Telegram notification.
 
     Args:
-        event:    EventBridge invocation payload.
-        context:  Lambda runtime context.
-        _octopus: Injected Octopus client (tests only).
-        _weather: Injected weather client (tests only).
-        _store:   Injected event store (tests only).
+        event:     EventBridge invocation payload.
+        context:   Lambda runtime context.
+        _octopus:  Injected Octopus client (tests only).
+        _weather:  Injected weather client (tests only).
+        _store:    Injected event store (tests only).
         _telegram: Injected Telegram client (tests only).
-        _chat_id: Injected chat ID (tests only).
+        _chat_id:  Injected single chat ID (tests only, legacy).
+        _chat_ids: Injected chat ID list (tests only). Takes precedence over
+                   ``_chat_id`` when both are supplied.
 
     Returns:
         A JSON-serialisable dict with ``statusCode`` and ``body``.
@@ -116,7 +119,14 @@ def handler(
     weather = _weather if _weather is not None else get_weather_client()
     store = _store if _store is not None else get_event_store()
     telegram = _telegram if _telegram is not None else get_telegram_client()
-    chat_id = _chat_id if _chat_id is not None else get_chat_id_provider()()
+
+    # Resolve target chat IDs.  _chat_ids > _chat_id > Secrets Manager.
+    if _chat_ids is not None:
+        chat_ids = _chat_ids
+    elif _chat_id is not None:
+        chat_ids = [_chat_id]
+    else:
+        chat_ids = get_chat_ids_provider()()
 
     # Determine target date and notification kind from the event.
     now = datetime.now(tz=UTC)
@@ -164,10 +174,11 @@ def handler(
         extra={"recommended": recommendation.recommended, "reasons": recommendation.reasons},
     )
 
-    # Format and send the Telegram notification.
+    # Format and send the Telegram notification to all configured chats.
     message = NotificationService().format(recommendation, kind)
-    telegram.send_message(chat_id=chat_id, text=message)
-    logger.info("Notification sent", extra={"chat_id": chat_id})
+    for chat_id in chat_ids:
+        telegram.send_message(chat_id=chat_id, text=message)
+        logger.info("Notification sent", extra={"chat_id": chat_id})
 
     return {
         "statusCode": 200,

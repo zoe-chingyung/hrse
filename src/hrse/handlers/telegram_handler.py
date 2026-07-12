@@ -27,7 +27,9 @@ from typing import TYPE_CHECKING, Any
 from aws_lambda_powertools import Logger, Tracer
 from pydantic import ValidationError
 
+from hrse.clients.octopus import OctopusClientProtocol, get_octopus_client
 from hrse.models.telegram import TelegramUpdate
+from hrse.store.chat_settings_store import ChatSettingsStore, get_chat_settings_store
 from hrse.store.s3_store import get_event_store
 from hrse.telegram.client import TelegramClientProtocol, get_telegram_client
 from hrse.telegram.router import route
@@ -49,6 +51,8 @@ def handler(
     *,
     _client: TelegramClientProtocol | None = None,
     _store: EventStore | None = None,
+    _settings_store: ChatSettingsStore | None = None,
+    _octopus: OctopusClientProtocol | None = None,
 ) -> dict[str, Any]:
     """Receive an API Gateway HTTP API event and dispatch to the Telegram router.
 
@@ -57,6 +61,8 @@ def handler(
         context: Lambda runtime context.
         _client: Injected Telegram client (tests only). Production omits this.
         _store:  Injected event store (tests only). Production omits this.
+        _settings_store: Injected chat settings store (tests only).
+        _octopus: Injected Octopus price client (tests only).
 
     Returns:
         API Gateway-compatible response with ``statusCode`` 200.
@@ -73,9 +79,20 @@ def handler(
 
     client = _client if _client is not None else get_telegram_client()
     store = _store if _store is not None else get_event_store()
+    settings_store = _settings_store if _settings_store is not None else get_chat_settings_store()
+    octopus = _octopus if _octopus is not None else get_octopus_client()
+
+    from hrse.config import get_settings
 
     try:
-        route(update=update, client=client, store=store)
+        route(
+            update=update,
+            client=client,
+            store=store,
+            settings_store=settings_store,
+            octopus=octopus,
+            display_timezone=get_settings().display_timezone,
+        )
     except Exception:
         logger.exception("Unhandled error while processing Telegram update")
 

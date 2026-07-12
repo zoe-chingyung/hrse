@@ -12,6 +12,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from hrse import __version__
+from hrse.models.chat_settings import Language
 from hrse.models.events import LAUNDRY_COMPLETED, Event
 from hrse.telegram.commands import (
     handle_events,
@@ -20,6 +21,7 @@ from hrse.telegram.commands import (
     handle_summary,
     handle_unknown,
 )
+from hrse.utils.datetime_utils import utcnow
 
 # ---------------------------------------------------------------------------
 # Shared helpers
@@ -51,24 +53,24 @@ def _laundry_event(ts: datetime | None = None) -> Event:
 class TestHandleHealth:
     def test_sends_one_message(self) -> None:
         client = _mock_client()
-        handle_health(chat_id=100, client=client)
+        handle_health(chat_id=100, client=client, lang=Language.EN)
         client.send_message.assert_called_once()
 
     def test_sends_to_correct_chat(self) -> None:
         client = _mock_client()
-        handle_health(chat_id=999, client=client)
+        handle_health(chat_id=999, client=client, lang=Language.EN)
         _, kwargs = client.send_message.call_args
         assert kwargs["chat_id"] == 999
 
     def test_reply_contains_healthy(self) -> None:
         client = _mock_client()
-        handle_health(chat_id=1, client=client)
+        handle_health(chat_id=1, client=client, lang=Language.EN)
         _, kwargs = client.send_message.call_args
         assert "healthy" in kwargs["text"].lower() or "HRSE" in kwargs["text"]
 
     def test_reply_contains_version(self) -> None:
         client = _mock_client()
-        handle_health(chat_id=1, client=client)
+        handle_health(chat_id=1, client=client, lang=Language.EN)
         _, kwargs = client.send_message.call_args
         assert __version__ in kwargs["text"]
 
@@ -81,18 +83,18 @@ class TestHandleHealth:
 class TestHandleUnknown:
     def test_sends_one_message(self) -> None:
         client = _mock_client()
-        handle_unknown(chat_id=1, text="/bogus", client=client)
+        handle_unknown(chat_id=1, text="/bogus", client=client, lang=Language.EN)
         client.send_message.assert_called_once()
 
     def test_reply_mentions_health_command(self) -> None:
         client = _mock_client()
-        handle_unknown(chat_id=1, text="/bogus", client=client)
+        handle_unknown(chat_id=1, text="/bogus", client=client, lang=Language.EN)
         _, kwargs = client.send_message.call_args
         assert "/health" in kwargs["text"]
 
     def test_reply_mentions_new_commands(self) -> None:
         client = _mock_client()
-        handle_unknown(chat_id=1, text="/bogus", client=client)
+        handle_unknown(chat_id=1, text="/bogus", client=client, lang=Language.EN)
         _, kwargs = client.send_message.call_args
         assert "/laundry_done" in kwargs["text"]
         assert "/events" in kwargs["text"]
@@ -109,27 +111,27 @@ class TestHandleLaundryDone:
     def test_appends_event_to_store(self) -> None:
         client = _mock_client()
         store = _mock_store()
-        handle_laundry_done(chat_id=1, client=client, store=store)
+        handle_laundry_done(chat_id=1, client=client, store=store, lang=Language.EN)
         store.append_event.assert_called_once()
 
     def test_appended_event_is_laundry_completed(self) -> None:
         client = _mock_client()
         store = _mock_store()
-        handle_laundry_done(chat_id=1, client=client, store=store)
+        handle_laundry_done(chat_id=1, client=client, store=store, lang=Language.EN)
         event = store.append_event.call_args[0][0]
         assert event.event_type == LAUNDRY_COMPLETED
 
     def test_sends_confirmation_to_correct_chat(self) -> None:
         client = _mock_client()
         store = _mock_store([_laundry_event()])
-        handle_laundry_done(chat_id=42, client=client, store=store)
+        handle_laundry_done(chat_id=42, client=client, store=store, lang=Language.EN)
         _, kwargs = client.send_message.call_args
         assert kwargs["chat_id"] == 42
 
     def test_reply_contains_laundry_recorded(self) -> None:
         client = _mock_client()
         store = _mock_store([_laundry_event()])
-        handle_laundry_done(chat_id=1, client=client, store=store)
+        handle_laundry_done(chat_id=1, client=client, store=store, lang=Language.EN)
         _, kwargs = client.send_message.call_args
         assert "Laundry recorded" in kwargs["text"]
 
@@ -137,10 +139,12 @@ class TestHandleLaundryDone:
         """After appending, the store returns the new event; count should appear."""
         client = _mock_client()
         # After append, list_events returns the new event
-        event = _laundry_event()
+        # Use a dynamic timestamp: WeeklyStateService counts events in the
+        # *current* ISO week, so a hardcoded date silently expires.
+        event = _laundry_event(utcnow())
         store = MagicMock()
         store.list_events.return_value = [event]
-        handle_laundry_done(chat_id=1, client=client, store=store)
+        handle_laundry_done(chat_id=1, client=client, store=store, lang=Language.EN)
         _, kwargs = client.send_message.call_args
         assert "1" in kwargs["text"]
 
@@ -155,20 +159,20 @@ class TestHandleEvents:
     def test_sends_one_message(self) -> None:
         client = _mock_client()
         store = _mock_store([_laundry_event()])
-        handle_events(chat_id=1, client=client, store=store)
+        handle_events(chat_id=1, client=client, store=store, lang=Language.EN)
         client.send_message.assert_called_once()
 
     def test_empty_store_sends_no_events_message(self) -> None:
         client = _mock_client()
         store = _mock_store([])
-        handle_events(chat_id=1, client=client, store=store)
+        handle_events(chat_id=1, client=client, store=store, lang=Language.EN)
         _, kwargs = client.send_message.call_args
         assert "No events" in kwargs["text"]
 
     def test_event_type_appears_in_reply(self) -> None:
         client = _mock_client()
         store = _mock_store([_laundry_event()])
-        handle_events(chat_id=1, client=client, store=store)
+        handle_events(chat_id=1, client=client, store=store, lang=Language.EN)
         _, kwargs = client.send_message.call_args
         assert LAUNDRY_COMPLETED in kwargs["text"]
 
@@ -176,7 +180,7 @@ class TestHandleEvents:
         events = [_laundry_event() for _ in range(15)]
         client = _mock_client()
         store = _mock_store(events)
-        handle_events(chat_id=1, client=client, store=store)
+        handle_events(chat_id=1, client=client, store=store, lang=Language.EN)
         _, kwargs = client.send_message.call_args
         # Each event adds one bullet line; 10 lines max
         assert kwargs["text"].count("•") == 10
@@ -184,7 +188,7 @@ class TestHandleEvents:
     def test_sends_to_correct_chat(self) -> None:
         client = _mock_client()
         store = _mock_store([_laundry_event()])
-        handle_events(chat_id=77, client=client, store=store)
+        handle_events(chat_id=77, client=client, store=store, lang=Language.EN)
         _, kwargs = client.send_message.call_args
         assert kwargs["chat_id"] == 77
 
@@ -199,33 +203,33 @@ class TestHandleSummary:
     def test_sends_one_message(self) -> None:
         client = _mock_client()
         store = _mock_store()
-        handle_summary(chat_id=1, client=client, store=store)
+        handle_summary(chat_id=1, client=client, store=store, lang=Language.EN)
         client.send_message.assert_called_once()
 
     def test_reply_contains_household_summary_header(self) -> None:
         client = _mock_client()
         store = _mock_store()
-        handle_summary(chat_id=1, client=client, store=store)
+        handle_summary(chat_id=1, client=client, store=store, lang=Language.EN)
         _, kwargs = client.send_message.call_args
         assert "Household Summary" in kwargs["text"]
 
     def test_reply_contains_laundry_count(self) -> None:
         client = _mock_client()
         store = _mock_store()
-        handle_summary(chat_id=1, client=client, store=store)
+        handle_summary(chat_id=1, client=client, store=store, lang=Language.EN)
         _, kwargs = client.send_message.call_args
         assert "Laundry" in kwargs["text"]
 
     def test_reply_contains_dash_when_no_last_laundry(self) -> None:
         client = _mock_client()
         store = _mock_store([])  # no events
-        handle_summary(chat_id=1, client=client, store=store)
+        handle_summary(chat_id=1, client=client, store=store, lang=Language.EN)
         _, kwargs = client.send_message.call_args
         assert "—" in kwargs["text"]
 
     def test_sends_to_correct_chat(self) -> None:
         client = _mock_client()
         store = _mock_store()
-        handle_summary(chat_id=55, client=client, store=store)
+        handle_summary(chat_id=55, client=client, store=store, lang=Language.EN)
         _, kwargs = client.send_message.call_args
         assert kwargs["chat_id"] == 55

@@ -16,6 +16,7 @@ The system recommends — it does not control appliances.
 | Sprint 3 | Data clients (Octopus Agile, Open-Meteo) + decision engine | ✅ Done |
 | Sprint 4 | EventBridge scheduled rules + daily Telegram notifications | ✅ Done |
 | Sprint 5 | Docker build pipeline + decision tuning (wash budget model) | ✅ Done |
+| Sprint 6 | Group onboarding (bilingual EN/中文 welcome + language setting) + `/prices` chart | ✅ Done |
 
 ---
 
@@ -114,6 +115,7 @@ docker compose build
 ```bash
 # 1. Build the Lambda package (produces lambda_packages/hrse/)
 mkdir -p lambda_packages/hrse
+docker compose build --no-cache lambda-builder 2>&1
 docker compose run --rm lambda-builder
 
 # 2. Deploy — Terraform zips lambda_packages/hrse/ and uploads to Lambda
@@ -205,10 +207,25 @@ Version: 0.1.0
 
 | Command | Action |
 |---|---|
+| `/start` | Bilingual welcome + language picker |
+| `/language` | Change the chat's language (English / 中文) |
+| `/prices` | Today's Agile prices as a unicode bar chart |
+| `/prices_tomorrow` | Tomorrow's prices (published ~16:00 UK time) |
 | `/health` | Service status check |
 | `/laundry_done` | Record a completed laundry run |
 | `/events` | Last 10 events with timestamps |
 | `/summary` | This week's laundry count |
+
+### Group onboarding & language
+
+When the bot is added to a group (`my_chat_member` update — delivered even
+with privacy mode on), it sends a bilingual welcome with an inline keyboard.
+The chosen language is stored per chat in S3 (`settings/{chat_id}.json`) and
+applied to all command replies. Commands in groups arrive as
+`/command@BotName`; the suffix is stripped automatically.
+
+Day boundaries and displayed times for `/prices` use `HRSE_DISPLAY_TIMEZONE`
+(IANA name, default `Europe/London` — correct across GMT/BST).
 
 ### Daily notifications
 

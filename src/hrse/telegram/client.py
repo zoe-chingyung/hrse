@@ -23,7 +23,7 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from functools import lru_cache
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 from aws_lambda_powertools import Logger
 
@@ -47,12 +47,50 @@ class TelegramClientProtocol(Protocol):
     implement the right methods — no inheritance required.
     """
 
-    def send_message(self, chat_id: int, text: str, parse_mode: str = "HTML") -> None:
+    def send_message(
+        self,
+        chat_id: int,
+        text: str,
+        parse_mode: str = "HTML",
+        reply_markup: dict[str, Any] | None = None,
+    ) -> None:
         """Send a text message to ``chat_id``.
 
         Args:
             chat_id: Telegram chat identifier.
             text:    Message body (HTML or plain text depending on parse_mode).
+            parse_mode: Telegram parse mode, defaults to "HTML".
+            reply_markup: Optional InlineKeyboardMarkup as a plain dict.
+
+        Raises:
+            TelegramApiError: If the Telegram API returns a non-2xx response.
+        """
+        ...
+
+    def answer_callback_query(self, callback_query_id: str) -> None:
+        """Acknowledge an inline-keyboard button press (stops the spinner).
+
+        Args:
+            callback_query_id: The ``id`` field of the CallbackQuery.
+
+        Raises:
+            TelegramApiError: If the Telegram API returns a non-2xx response.
+        """
+        ...
+
+    def edit_message_text(
+        self,
+        chat_id: int,
+        message_id: int,
+        text: str,
+        parse_mode: str = "HTML",
+    ) -> None:
+        """Replace the text (and keyboard) of an existing bot message.
+
+        Args:
+            chat_id:    Telegram chat identifier.
+            message_id: Identifier of the message to edit.
+            text:       New message body.
             parse_mode: Telegram parse mode, defaults to "HTML".
 
         Raises:
@@ -99,29 +137,100 @@ class HttpTelegramClient:
     # TelegramClientProtocol implementation
     # ------------------------------------------------------------------
 
-    def send_message(self, chat_id: int, text: str, parse_mode: str = "HTML") -> None:
+    def send_message(
+        self,
+        chat_id: int,
+        text: str,
+        parse_mode: str = "HTML",
+        reply_markup: dict[str, Any] | None = None,
+    ) -> None:
         """POST ``sendMessage`` to the Telegram Bot API.
 
         Args:
             chat_id:    Telegram chat identifier.
             text:       Message body.
             parse_mode: Telegram parse mode, defaults to "HTML".
+            reply_markup: Optional InlineKeyboardMarkup as a plain dict.
+
+        Raises:
+            TelegramApiError: If the API returns error JSON or a non-2xx status.
+        """
+        payload: dict[str, Any] = {"chat_id": chat_id, "text": text, "parse_mode": parse_mode}
+        if reply_markup is not None:
+            payload["reply_markup"] = reply_markup
+        self._post("sendMessage", payload)
+        logger.info("Telegram message sent", extra={"chat_id": chat_id})
+
+    def answer_callback_query(self, callback_query_id: str) -> None:
+        """POST ``answerCallbackQuery`` to acknowledge a button press.
+
+        Args:
+            callback_query_id: The ``id`` field of the CallbackQuery.
+
+        Raises:
+            TelegramApiError: If the API returns error JSON or a non-2xx status.
+        """
+        self._post("answerCallbackQuery", {"callback_query_id": callback_query_id})
+        logger.debug("Callback query answered", extra={"callback_query_id": callback_query_id})
+
+    def edit_message_text(
+        self,
+        chat_id: int,
+        message_id: int,
+        text: str,
+        parse_mode: str = "HTML",
+    ) -> None:
+        """POST ``editMessageText`` to replace an existing message's body.
+
+        Editing without ``reply_markup`` also removes any inline keyboard,
+        which is exactly what the onboarding flow wants after a choice.
+
+        Args:
+            chat_id:    Telegram chat identifier.
+            message_id: Identifier of the message to edit.
+            text:       New message body.
+            parse_mode: Telegram parse mode, defaults to "HTML".
+
+        Raises:
+            TelegramApiError: If the API returns error JSON or a non-2xx status.
+        """
+        self._post(
+            "editMessageText",
+            {
+                "chat_id": chat_id,
+                "message_id": message_id,
+                "text": text,
+                "parse_mode": parse_mode,
+            },
+        )
+        logger.info("Telegram message edited", extra={"chat_id": chat_id})
+
+    # ------------------------------------------------------------------
+    # Private helpers
+    # ------------------------------------------------------------------
+
+    def _post(self, method: str, payload: dict[str, Any]) -> None:
+        """POST ``payload`` to a Bot API ``method``, raising on any error.
+
+        Args:
+            method:  Bot API method name, e.g. "sendMessage".
+            payload: JSON-serialisable request body.
 
         Raises:
             TelegramApiError: If the API returns error JSON or a non-2xx status.
         """
         token = self._token_provider()
-        url = f"{_TELEGRAM_API_BASE}/bot{token}/sendMessage"
-        payload = json.dumps({"chat_id": chat_id, "text": text, "parse_mode": parse_mode}).encode()
+        url = f"{_TELEGRAM_API_BASE}/bot{token}/{method}"
+        body_bytes = json.dumps(payload).encode()
 
         req = urllib.request.Request(
             url,
-            data=payload,
+            data=body_bytes,
             headers={"Content-Type": "application/json"},
             method="POST",
         )
 
-        logger.debug("Sending Telegram message", extra={"chat_id": chat_id})
+        logger.debug("Calling Telegram API", extra={"method": method})
 
         try:
             with urllib.request.urlopen(req) as resp:  # noqa: S310  (url is our own constant)
@@ -140,8 +249,6 @@ class HttpTelegramClient:
                 status_code=body.get("error_code", 0),
                 description=body.get("description", "Unknown error"),
             )
-
-        logger.info("Telegram message sent", extra={"chat_id": chat_id})
 
 
 # ---------------------------------------------------------------------------

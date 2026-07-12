@@ -64,6 +64,13 @@ class Settings(BaseSettings):
     weather_latitude: float = Field(default=51.5072, description="Forecast latitude")
     weather_longitude: float = Field(default=-0.1276, description="Forecast longitude")
 
+    # IANA timezone used to display times and define "today"/"tomorrow" day
+    # boundaries in user-facing output (e.g. the /prices command).
+    display_timezone: str = Field(
+        default="Europe/London",
+        description="IANA timezone for user-facing time display",
+    )
+
     # Feature flag: enable experimental optimiser (Sprint 3+)
     enable_optimiser: bool = Field(default=False, description="Enable experimental optimiser")
 

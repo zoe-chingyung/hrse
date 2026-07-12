@@ -121,3 +121,67 @@ class TestSendMessageErrors:
         with pytest.raises(TelegramApiError) as exc_info:
             client.send_message(chat_id=1, text="hi")
         assert exc_info.value.status_code == 401
+
+
+# ---------------------------------------------------------------------------
+# Sprint 6 — reply_markup, answerCallbackQuery, editMessageText
+# ---------------------------------------------------------------------------
+
+
+class TestSendMessageReplyMarkup:
+    @patch("urllib.request.urlopen")
+    def test_reply_markup_included_when_provided(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"ok": True, "result": {}})
+        markup = {"inline_keyboard": [[{"text": "English", "callback_data": "lang:en"}]]}
+        _make_client().send_message(chat_id=1, text="hi", reply_markup=markup)
+
+        body = json.loads(mock_urlopen.call_args[0][0].data)
+        assert body["reply_markup"] == markup
+
+    @patch("urllib.request.urlopen")
+    def test_reply_markup_omitted_by_default(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"ok": True, "result": {}})
+        _make_client().send_message(chat_id=1, text="hi")
+
+        body = json.loads(mock_urlopen.call_args[0][0].data)
+        assert "reply_markup" not in body
+
+
+class TestAnswerCallbackQuery:
+    @patch("urllib.request.urlopen")
+    def test_calls_correct_url_and_payload(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"ok": True, "result": True})
+        _make_client(token="tok").answer_callback_query(callback_query_id="cb-77")
+
+        req = mock_urlopen.call_args[0][0]
+        assert "/bottok/answerCallbackQuery" in req.full_url
+        assert json.loads(req.data) == {"callback_query_id": "cb-77"}
+
+    @patch("urllib.request.urlopen")
+    def test_api_error_raises(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response(
+            {"ok": False, "error_code": 400, "description": "query is too old"}
+        )
+        with pytest.raises(TelegramApiError, match="query is too old"):
+            _make_client().answer_callback_query(callback_query_id="stale")
+
+
+class TestEditMessageText:
+    @patch("urllib.request.urlopen")
+    def test_calls_correct_url_and_payload(self, mock_urlopen: MagicMock) -> None:
+        mock_urlopen.return_value = _mock_response({"ok": True, "result": {}})
+        _make_client(token="tok").edit_message_text(chat_id=-5, message_id=9, text="done")
+
+        req = mock_urlopen.call_args[0][0]
+        assert "/bottok/editMessageText" in req.full_url
+        body = json.loads(req.data)
+        assert body == {"chat_id": -5, "message_id": 9, "text": "done", "parse_mode": "HTML"}
+
+    @patch("urllib.request.urlopen")
+    def test_http_error_raises_telegram_api_error(self, mock_urlopen: MagicMock) -> None:
+        error_body = json.dumps({"description": "message not found"}).encode()
+        mock_urlopen.side_effect = urllib.error.HTTPError(
+            url="x", code=400, msg="Bad Request", hdrs=None, fp=BytesIO(error_body)
+        )
+        with pytest.raises(TelegramApiError, match="message not found"):
+            _make_client().edit_message_text(chat_id=1, message_id=1, text="x")

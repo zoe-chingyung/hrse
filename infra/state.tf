@@ -58,7 +58,10 @@ data "aws_iam_policy_document" "state_s3" {
       "s3:GetObject",
       "s3:PutObject",
     ]
-    resources = ["${aws_s3_bucket.hrse_state.arn}/events/*"]
+    resources = [
+      "${aws_s3_bucket.hrse_state.arn}/events/*",
+      "${aws_s3_bucket.hrse_state.arn}/settings/*",
+    ]
   }
 
   statement {

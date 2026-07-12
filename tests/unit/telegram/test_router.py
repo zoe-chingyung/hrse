@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from hrse.models.chat_settings import Language
 from hrse.models.telegram import TelegramChat, TelegramMessage, TelegramUpdate, TelegramUser
 from hrse.telegram.router import route
 
@@ -48,13 +49,15 @@ class TestRouteSprint2A:
     def test_health_command_dispatches_to_handle_health(self, mock_health: MagicMock) -> None:
         client = MagicMock()
         route(update=_update("/health", chat_id=55), client=client)
-        mock_health.assert_called_once_with(chat_id=55, client=client)
+        mock_health.assert_called_once_with(chat_id=55, client=client, lang=Language.EN)
 
     @patch("hrse.telegram.router.handle_unknown")
     def test_unknown_command_dispatches_to_handle_unknown(self, mock_unknown: MagicMock) -> None:
         client = MagicMock()
         route(update=_update("/bogus", chat_id=7), client=client)
-        mock_unknown.assert_called_once_with(chat_id=7, text="/bogus", client=client)
+        mock_unknown.assert_called_once_with(
+            chat_id=7, text="/bogus", client=client, lang=Language.EN
+        )
 
     @patch("hrse.telegram.router.handle_unknown")
     def test_plain_text_dispatches_to_handle_unknown(self, mock_unknown: MagicMock) -> None:
@@ -91,21 +94,27 @@ class TestRouteSprint2B:
         client = MagicMock()
         store = _mock_store()
         route(update=_update("/laundry_done", chat_id=10), client=client, store=store)
-        mock_handler.assert_called_once_with(chat_id=10, client=client, store=store)
+        mock_handler.assert_called_once_with(
+            chat_id=10, client=client, store=store, lang=Language.EN
+        )
 
     @patch("hrse.telegram.router.handle_events")
     def test_events_dispatches_to_handler(self, mock_handler: MagicMock) -> None:
         client = MagicMock()
         store = _mock_store()
         route(update=_update("/events", chat_id=20), client=client, store=store)
-        mock_handler.assert_called_once_with(chat_id=20, client=client, store=store)
+        mock_handler.assert_called_once_with(
+            chat_id=20, client=client, store=store, lang=Language.EN
+        )
 
     @patch("hrse.telegram.router.handle_summary")
     def test_summary_dispatches_to_handler(self, mock_handler: MagicMock) -> None:
         client = MagicMock()
         store = _mock_store()
         route(update=_update("/summary", chat_id=30), client=client, store=store)
-        mock_handler.assert_called_once_with(chat_id=30, client=client, store=store)
+        mock_handler.assert_called_once_with(
+            chat_id=30, client=client, store=store, lang=Language.EN
+        )
 
     def test_store_none_sends_unavailable_for_laundry_done(self) -> None:
         """When no store is provided, the router must gracefully reply."""
@@ -124,3 +133,162 @@ class TestRouteSprint2B:
         client = MagicMock()
         route(update=_update("/summary"), client=client, store=None)
         client.send_message.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Sprint 6 — my_chat_member, callback_query, /start, /language, /prices
+# ---------------------------------------------------------------------------
+
+
+def _joined_update(old: str = "left", new: str = "member", chat_id: int = -100) -> TelegramUpdate:
+    return TelegramUpdate.model_validate(
+        {
+            "update_id": 5,
+            "my_chat_member": {
+                "chat": {"id": chat_id},
+                "old_chat_member": {"status": old},
+                "new_chat_member": {"status": new},
+            },
+        }
+    )
+
+
+def _callback_update(data: str) -> TelegramUpdate:
+    return TelegramUpdate.model_validate(
+        {
+            "update_id": 6,
+            "callback_query": {
+                "id": "cb-9",
+                "from": {"id": 42, "is_bot": False, "first_name": "Zoe"},
+                "message": {"message_id": 3, "chat": {"id": -100}},
+                "data": data,
+            },
+        }
+    )
+
+
+class TestRouteMyChatMember:
+    @patch("hrse.telegram.router.handle_welcome")
+    def test_bot_added_triggers_welcome(self, mock_welcome: MagicMock) -> None:
+        client = MagicMock()
+        route(update=_joined_update(), client=client)
+        mock_welcome.assert_called_once_with(chat_id=-100, client=client)
+
+    @patch("hrse.telegram.router.handle_welcome")
+    def test_bot_promoted_does_not_retrigger_welcome(self, mock_welcome: MagicMock) -> None:
+        route(update=_joined_update(old="member", new="administrator"), client=MagicMock())
+        mock_welcome.assert_not_called()
+
+    @patch("hrse.telegram.router.handle_welcome")
+    def test_bot_removed_is_ignored(self, mock_welcome: MagicMock) -> None:
+        route(update=_joined_update(old="member", new="left"), client=MagicMock())
+        mock_welcome.assert_not_called()
+
+
+class TestRouteCallbackQuery:
+    @patch("hrse.telegram.router.handle_language_callback")
+    def test_language_data_dispatches_to_handler(self, mock_cb: MagicMock) -> None:
+        client = MagicMock()
+        settings_store = MagicMock()
+        update = _callback_update("lang:zh")
+        route(update=update, client=client, settings_store=settings_store)
+        mock_cb.assert_called_once_with(
+            query=update.callback_query, client=client, settings_store=settings_store
+        )
+
+    def test_unknown_data_is_answered_and_dropped(self) -> None:
+        client = MagicMock()
+        route(update=_callback_update("mystery:1"), client=client, settings_store=MagicMock())
+        client.answer_callback_query.assert_called_once_with(callback_query_id="cb-9")
+
+    def test_language_data_without_settings_store_is_answered(self) -> None:
+        client = MagicMock()
+        route(update=_callback_update("lang:en"), client=client)
+        client.answer_callback_query.assert_called_once()
+
+
+class TestRouteSprint6Commands:
+    @patch("hrse.telegram.router.handle_welcome")
+    def test_start_dispatches_to_welcome(self, mock_welcome: MagicMock) -> None:
+        client = MagicMock()
+        route(update=_update("/start", chat_id=8), client=client)
+        mock_welcome.assert_called_once_with(chat_id=8, client=client)
+
+    @patch("hrse.telegram.router.handle_language_prompt")
+    def test_language_dispatches_to_prompt(self, mock_prompt: MagicMock) -> None:
+        client = MagicMock()
+        route(update=_update("/language", chat_id=8), client=client)
+        mock_prompt.assert_called_once_with(chat_id=8, client=client)
+
+    @patch("hrse.telegram.router.handle_prices")
+    def test_prices_defaults_to_today(self, mock_prices: MagicMock) -> None:
+        client = MagicMock()
+        route(update=_update("/prices", chat_id=8), client=client, octopus=MagicMock())
+        assert mock_prices.call_args.kwargs["tomorrow"] is False
+
+    @patch("hrse.telegram.router.handle_prices")
+    def test_prices_tomorrow_argument(self, mock_prices: MagicMock) -> None:
+        client = MagicMock()
+        route(update=_update("/prices_tomorrow", chat_id=8), client=client, octopus=MagicMock())
+        assert mock_prices.call_args.kwargs["tomorrow"] is True
+
+    def test_prices_without_octopus_sends_unavailable(self) -> None:
+        client = MagicMock()
+        route(update=_update("/prices", chat_id=8), client=client)
+        _, kwargs = client.send_message.call_args
+        assert "unavailable" in kwargs["text"].lower()
+
+    @patch("hrse.telegram.router.handle_prices")
+    def test_display_timezone_forwarded(self, mock_prices: MagicMock) -> None:
+        from zoneinfo import ZoneInfo
+
+        route(
+            update=_update("/prices", chat_id=8),
+            client=MagicMock(),
+            octopus=MagicMock(),
+            display_timezone="Asia/Hong_Kong",
+        )
+        assert mock_prices.call_args.kwargs["display_tz"] == ZoneInfo("Asia/Hong_Kong")
+
+
+class TestGroupCommandSuffix:
+    @patch("hrse.telegram.router.handle_health")
+    def test_botname_suffix_is_stripped(self, mock_health: MagicMock) -> None:
+        client = MagicMock()
+        route(update=_update("/health@HRSEBot", chat_id=55), client=client)
+        mock_health.assert_called_once_with(chat_id=55, client=client, lang=Language.EN)
+
+    @patch("hrse.telegram.router.handle_prices")
+    def test_suffix_and_args_both_handled(self, mock_prices: MagicMock) -> None:
+        route(
+            update=_update("/prices@HRSEBot tomorrow", chat_id=5),
+            client=MagicMock(),
+            octopus=MagicMock(),
+        )
+        assert mock_prices.call_args.kwargs["tomorrow"] is True
+
+
+class TestLanguageResolution:
+    @patch("hrse.telegram.router.handle_health")
+    def test_stored_language_is_used(self, mock_health: MagicMock) -> None:
+        from datetime import UTC, datetime
+
+        from hrse.models.chat_settings import ChatSettings
+        from hrse.store.chat_settings_store import InMemoryChatSettingsStore
+
+        settings_store = InMemoryChatSettingsStore()
+        settings_store.save(
+            ChatSettings(
+                chat_id=55, language=Language.ZH, updated_at=datetime(2026, 7, 12, tzinfo=UTC)
+            )
+        )
+        client = MagicMock()
+        route(update=_update("/health", chat_id=55), client=client, settings_store=settings_store)
+        assert mock_health.call_args.kwargs["lang"] is Language.ZH
+
+    @patch("hrse.telegram.router.handle_health")
+    def test_settings_store_failure_defaults_to_english(self, mock_health: MagicMock) -> None:
+        broken = MagicMock()
+        broken.get.side_effect = RuntimeError("s3 down")
+        route(update=_update("/health", chat_id=55), client=MagicMock(), settings_store=broken)
+        assert mock_health.call_args.kwargs["lang"] is Language.EN

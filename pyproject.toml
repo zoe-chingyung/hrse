@@ -13,6 +13,7 @@ dependencies = [
     "pydantic-settings==2.3.4",
     "aws-lambda-powertools==2.43.0",
     "aws-xray-sdk>=2.15.0",
+    "tzdata>=2024.1",
 ]
 
 [project.optional-dependencies]
