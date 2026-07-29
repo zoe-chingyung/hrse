@@ -11,7 +11,12 @@ import pytest
 
 from hrse.models.events import WeeklySummary
 from hrse.models.pricing import PricePoint
-from hrse.models.task_config import LaundryTaskConfig
+from hrse.models.task_config import (
+    DishwasherConfig,
+    EVChargingConfig,
+    FlexibleTaskConfig,
+    LaundryTaskConfig,
+)
 from hrse.models.weather import DailyForecast
 from hrse.services.decision_engine import DecisionService
 
@@ -277,3 +282,68 @@ class TestHappyPath:
         assert rec.recommended is True
         assert rec.window is not None
         assert (rec.window.end - rec.window.start) == timedelta(hours=2)
+
+
+# ---------------------------------------------------------------------------
+# Sprint 5C — engine is generic across FlexibleTaskConfig implementations
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit()
+class TestGenericFlexibleTaskConfig:
+    def test_laundry_dishwasher_and_ev_configs_satisfy_the_protocol(self) -> None:
+        assert isinstance(LaundryTaskConfig(target_runs_per_week=2), FlexibleTaskConfig)
+        assert isinstance(DishwasherConfig(), FlexibleTaskConfig)
+        assert isinstance(EVChargingConfig(), FlexibleTaskConfig)
+
+    def test_dishwasher_recommendation_uses_dishwasher_task_name(self) -> None:
+        config = DishwasherConfig(
+            target_runs_per_week=2,
+            duration_slots=2,
+            earliest_start="08:00",
+            latest_finish="22:00",
+            wash_budget_pence=30.0,
+            machine_kwh=1.0,
+        )
+        rec = DecisionService().evaluate(
+            _summary(0), _slots(13, 0, [8.0, 8.0]), _forecast(), config
+        )
+        assert rec.task == "dishwasher"
+        assert rec.recommended is True
+
+    def test_dishwasher_ignores_weather_by_default(self) -> None:
+        # Near-worst-case weather (would fail laundry's gate) must not
+        # affect a dishwasher, whose defaults (min_uv=0, max_rain_probability
+        # =100) make the weather rule maximally permissive. Rule 4's
+        # comparisons are strict, so the literal extremes (uv=0.0,
+        # rain=100) would still trip it — use values just inside them,
+        # which is what any real forecast reading would look like.
+        config = DishwasherConfig(duration_slots=2, wash_budget_pence=99.0, machine_kwh=1.0)
+        rec = DecisionService().evaluate(
+            _summary(0),
+            _slots(13, 0, [8.0, 8.0]),
+            _forecast(uv=0.1, rain=99),
+            config,
+        )
+        assert rec.recommended is True
+
+    def test_ev_charging_recommendation_uses_ev_task_name(self) -> None:
+        config = EVChargingConfig(
+            target_runs_per_week=2,
+            duration_slots=2,
+            earliest_start="00:00",
+            latest_finish="07:00",
+            wash_budget_pence=99.0,
+            machine_kwh=1.0,
+        )
+        rec = DecisionService().evaluate(
+            _summary(0), _slots(1, 0, [8.0, 8.0]), _forecast(uv=0.1, rain=99), config
+        )
+        assert rec.task == "ev_charging"
+        assert rec.recommended is True
+
+    def test_not_recommended_dishwasher_also_uses_its_task_name(self) -> None:
+        config = DishwasherConfig(target_runs_per_week=1)
+        rec = DecisionService().evaluate(_summary(1), [], _forecast(), config)
+        assert rec.task == "dishwasher"
+        assert rec.recommended is False

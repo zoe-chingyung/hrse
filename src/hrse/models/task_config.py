@@ -1,16 +1,18 @@
-"""Configuration model for the laundry flexible task.
+"""Configuration models for flexible household tasks.
 
-Sprint 3 — Decision inputs.
+Sprint 3  — LaundryTaskConfig (decision inputs).
+Sprint 5C — FlexibleTaskConfig protocol + DishwasherConfig, EVChargingConfig.
 
-Mirrors Section 9 of the requirements. This is the user-defined constraint
-set the decision engine evaluates against. Times are stored as ``HH:MM``
-strings and exposed as ``datetime.time`` via helper properties so the engine
-never re-parses raw strings.
+Every concrete config is the user-defined constraint set the decision engine
+evaluates against. Times are stored as ``HH:MM`` strings; the engine parses
+them via ``hrse.utils.datetime_utils.parse_hhmm`` rather than relying on a
+task-specific convenience property, which is what lets ``DecisionService``
+stay generic across task types.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
@@ -23,10 +25,57 @@ if TYPE_CHECKING:
     from hrse.models.chat_settings import TaskProfile
 
 
-class LaundryTaskConfig(BaseModel):
+@runtime_checkable
+class FlexibleTaskConfig(Protocol):
+    """Structural contract every flexible-task config satisfies.
+
+    Captures exactly the fields ``DecisionService.evaluate`` reads. Any
+    object with these attributes — ``LaundryTaskConfig``,
+    ``DishwasherConfig``, ``EVChargingConfig``, or a future task type —
+    can be passed to the engine without it knowing which concrete class it
+    is. No inheritance required; this is checked structurally.
+    """
+
+    task_name: str
+    target_runs_per_week: int
+    duration_slots: int
+    earliest_start: str
+    latest_finish: str
+    wash_budget_pence: float
+    machine_kwh: float
+    min_uv: float
+    max_rain_probability: int
+
+
+class _TaskConfigBase(BaseModel):
+    """Shared HH:MM validation for every concrete flexible-task config.
+
+    Subclasses declare their own fields (defaults differ per task type), but
+    share this validation logic so it stays in exactly one place.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    @field_validator("earliest_start", "latest_finish", check_fields=False)
+    @classmethod
+    def _validate_hhmm(cls, value: str) -> str:
+        """Ensure time fields are valid HH:MM; stored as the original string."""
+        parse_hhmm(value)  # raises if invalid
+        return value
+
+    @model_validator(mode="after")
+    def _finish_after_start(self) -> _TaskConfigBase:
+        """Ensure the window is non-empty: latest_finish must be after earliest_start."""
+        if parse_hhmm(self.latest_finish) <= parse_hhmm(self.earliest_start):  # type: ignore[attr-defined]
+            raise ValueError("latest_finish must be after earliest_start")
+        return self
+
+
+class LaundryTaskConfig(_TaskConfigBase):
     """User-defined constraints for the laundry task.
 
     Attributes:
+        task_name:              Task identifier, always "laundry".
         target_runs_per_week:   How many laundry runs the household wants per week.
         duration_slots:         Length of a single run as a count of consecutive
                                 30-minute slots (4 = 2 hours).
@@ -44,8 +93,7 @@ class LaundryTaskConfig(BaseModel):
                                 probability is strictly below this percentage.
     """
 
-    model_config = ConfigDict(frozen=True)
-
+    task_name: str = Field(default="laundry", description="Task identifier")
     target_runs_per_week: int = Field(..., ge=1, description="Desired laundry runs per week")
     duration_slots: int = Field(
         default=4,
@@ -68,20 +116,6 @@ class LaundryTaskConfig(BaseModel):
     max_rain_probability: int = Field(
         default=100, ge=0, le=100, description="Upper rain probability threshold (percent)"
     )
-
-    @field_validator("earliest_start", "latest_finish")
-    @classmethod
-    def _validate_hhmm(cls, value: str) -> str:
-        """Ensure time fields are valid HH:MM; stored as the original string."""
-        parse_hhmm(value)  # raises if invalid
-        return value
-
-    @model_validator(mode="after")
-    def _finish_after_start(self) -> LaundryTaskConfig:
-        """Ensure the window is non-empty: latest_finish must be after earliest_start."""
-        if self.latest_finish_time <= self.earliest_start_time:
-            raise ValueError("latest_finish must be after earliest_start")
-        return self
 
     # ------------------------------------------------------------------
     # Construction from global Settings (Sprint 5A)
@@ -158,3 +192,54 @@ class LaundryTaskConfig(BaseModel):
     def latest_finish_time(self) -> time:
         """``latest_finish`` parsed to a ``datetime.time``."""
         return parse_hhmm(self.latest_finish)
+
+
+class DishwasherConfig(_TaskConfigBase):
+    """User-defined constraints for the dishwasher flexible task.
+
+    Shorter than a laundry run and, unlike laundry, has no weather gate —
+    a dishwasher runs indoors regardless of sun or rain (``min_uv=0``,
+    ``max_rain_probability=100`` disable the weather rule entirely).
+    """
+
+    task_name: str = Field(default="dishwasher", description="Task identifier")
+    target_runs_per_week: int = Field(
+        default=5, ge=1, description="Desired dishwasher runs per week"
+    )
+    duration_slots: int = Field(default=3, ge=1, description="~1.5 hour cycle (3 x 30-min slots)")
+    earliest_start: str = Field(default="08:00", description="Earliest start time, HH:MM")
+    latest_finish: str = Field(default="22:00", description="Latest finish time, HH:MM")
+    wash_budget_pence: float = Field(default=25.0, gt=0, description="Max spend per cycle in pence")
+    machine_kwh: float = Field(default=1.0, gt=0, description="Energy per dishwasher cycle in kWh")
+    min_uv: float = Field(default=0.0, ge=0, description="Unused — dishwashers run indoors")
+    max_rain_probability: int = Field(
+        default=100, ge=0, le=100, description="Unused — dishwashers run indoors"
+    )
+
+
+class EVChargingConfig(_TaskConfigBase):
+    """User-defined constraints for the EV overnight-charging flexible task.
+
+    A single charge session spans several hours and, like the dishwasher,
+    has no weather gate — charging happens regardless of sun or rain.
+    """
+
+    task_name: str = Field(default="ev_charging", description="Task identifier")
+    target_runs_per_week: int = Field(
+        default=3, ge=1, description="Desired charge sessions per week"
+    )
+    duration_slots: int = Field(
+        default=8, ge=1, description="4 hour charge session (8 x 30-min slots)"
+    )
+    earliest_start: str = Field(default="00:00", description="Earliest start time, HH:MM")
+    latest_finish: str = Field(default="07:00", description="Latest finish time, HH:MM")
+    wash_budget_pence: float = Field(
+        default=200.0, gt=0, description="Max spend per charge session in pence"
+    )
+    machine_kwh: float = Field(
+        default=7.0, gt=0, description="Energy per overnight charge session in kWh"
+    )
+    min_uv: float = Field(default=0.0, ge=0, description="Unused — no weather gate for charging")
+    max_rain_probability: int = Field(
+        default=100, ge=0, le=100, description="Unused — no weather gate for charging"
+    )

@@ -7,7 +7,7 @@ from pydantic import ValidationError
 
 from hrse.config import Settings
 from hrse.models.chat_settings import TaskProfile
-from hrse.models.task_config import LaundryTaskConfig
+from hrse.models.task_config import DishwasherConfig, EVChargingConfig, LaundryTaskConfig
 
 # ---------------------------------------------------------------------------
 # Existing validation behaviour
@@ -122,3 +122,58 @@ class TestFromProfileOrSettings:
         assert config.machine_kwh == 1.1
         assert config.min_uv == 1.0
         assert config.max_rain_probability == 80
+
+
+# ---------------------------------------------------------------------------
+# DishwasherConfig / EVChargingConfig — Sprint 5C
+# ---------------------------------------------------------------------------
+
+
+class TestDishwasherConfig:
+    def test_defaults_have_no_weather_gate(self) -> None:
+        config = DishwasherConfig()
+        assert config.task_name == "dishwasher"
+        assert config.min_uv == 0.0
+        assert config.max_rain_probability == 100
+
+    def test_shorter_duration_than_laundry_default(self) -> None:
+        assert (
+            DishwasherConfig().duration_slots
+            < LaundryTaskConfig(target_runs_per_week=2).duration_slots
+        )
+
+    def test_is_frozen(self) -> None:
+        config = DishwasherConfig()
+        with pytest.raises(ValidationError):
+            config.task_name = "other"  # type: ignore[misc]
+
+    def test_invalid_hhmm_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="HH:MM"):
+            DishwasherConfig(earliest_start="not-a-time")
+
+    def test_finish_before_start_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="latest_finish must be after earliest_start"):
+            DishwasherConfig(earliest_start="20:00", latest_finish="08:00")
+
+
+class TestEVChargingConfig:
+    def test_defaults_have_no_weather_gate(self) -> None:
+        config = EVChargingConfig()
+        assert config.task_name == "ev_charging"
+        assert config.min_uv == 0.0
+        assert config.max_rain_probability == 100
+
+    def test_longer_duration_and_higher_kwh_than_laundry_default(self) -> None:
+        laundry = LaundryTaskConfig(target_runs_per_week=2)
+        ev = EVChargingConfig()
+        assert ev.duration_slots > laundry.duration_slots
+        assert ev.machine_kwh > laundry.machine_kwh
+
+    def test_overnight_window_by_default(self) -> None:
+        config = EVChargingConfig()
+        assert config.earliest_start == "00:00"
+        assert config.latest_finish == "07:00"
+
+    def test_invalid_hhmm_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="HH:MM"):
+            EVChargingConfig(latest_finish="not-a-time")

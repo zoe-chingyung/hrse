@@ -33,17 +33,17 @@ from typing import TYPE_CHECKING
 from aws_lambda_powertools import Logger
 
 from hrse.models.recommendation import Recommendation, RecommendationWindow
+from hrse.utils.datetime_utils import parse_hhmm
 
 if TYPE_CHECKING:
     from hrse.models.events import WeeklySummary
     from hrse.models.pricing import PricePoint
-    from hrse.models.task_config import LaundryTaskConfig
+    from hrse.models.task_config import FlexibleTaskConfig
     from hrse.models.weather import DailyForecast
 
 logger = Logger(child=True)
 
 _SLOT = timedelta(minutes=30)
-_TASK = "laundry"
 
 
 class _Candidate:
@@ -71,7 +71,7 @@ class DecisionService:
         summary: WeeklySummary,
         prices: list[PricePoint],
         forecast: DailyForecast,
-        config: LaundryTaskConfig,
+        config: FlexibleTaskConfig,
     ) -> Recommendation:
         """Run the rules and return a recommendation.
 
@@ -79,29 +79,38 @@ class DecisionService:
             summary:  Weekly activity summary (drives Rule 1).
             prices:   Half-hourly prices for the candidate day, any order.
             forecast: The day's weather summary (drives Rule 4).
-            config:   The user's laundry constraints.
+            config:   The task's constraints — any ``FlexibleTaskConfig``
+                      (laundry, dishwasher, EV charging, ...).
 
         Returns:
             A ``Recommendation``; ``recommended`` is False with an explanatory
             reason whenever no acceptable window exists.
         """
         # Rule 1 — target already met?
+        # NOTE (Sprint 5C): summary.laundry_count is laundry-specific — the
+        # WeeklySummary/event model has no per-task completion counts yet.
+        # Generalising weekly-activity tracking to every task type is out of
+        # scope for this sprint; until then, every task's Rule 1 is gated by
+        # the same laundry counter. Flagged rather than silently wrong.
         if summary.laundry_count >= config.target_runs_per_week:
-            logger.debug("Laundry target already met", extra={"count": summary.laundry_count})
+            logger.debug(
+                "Task target already met",
+                extra={"task": config.task_name, "count": summary.laundry_count},
+            )
             return Recommendation(
-                task=_TASK, recommended=False, reasons=["laundry target already met"]
+                task=config.task_name, recommended=False, reasons=["laundry target already met"]
             )
 
         # Rule 4 (day-level gate) — apply weather before bothering with slots.
         weather_reasons = self._weather_failures(forecast, config)
         if weather_reasons:
-            return Recommendation(task=_TASK, recommended=False, reasons=weather_reasons)
+            return Recommendation(task=config.task_name, recommended=False, reasons=weather_reasons)
 
         # Rule 2 — build valid contiguous candidate windows within the time range.
         candidates = self._candidate_windows(prices, config)
         if not candidates:
             return Recommendation(
-                task=_TASK,
+                task=config.task_name,
                 recommended=False,
                 reasons=["no valid execution window in the allowed time range"],
             )
@@ -114,7 +123,7 @@ class DecisionService:
         if not affordable:
             est_cost = round(min(c.avg_cost for c in candidates) * config.machine_kwh, 1)
             return Recommendation(
-                task=_TASK,
+                task=config.task_name,
                 recommended=False,
                 reasons=[
                     f"cheapest window would cost ~{est_cost}p"
@@ -136,11 +145,15 @@ class DecisionService:
             f"rain probability below {config.max_rain_probability}%",
         ]
         logger.info(
-            "Laundry recommended",
-            extra={"start": window.start.isoformat(), "avg_pence": round(best.avg_cost, 2)},
+            "Task recommended",
+            extra={
+                "task": config.task_name,
+                "start": window.start.isoformat(),
+                "avg_pence": round(best.avg_cost, 2),
+            },
         )
         return Recommendation(
-            task=_TASK,
+            task=config.task_name,
             recommended=True,
             window=window,
             expected_price_pence=round(best.avg_cost * config.machine_kwh, 1),
@@ -152,7 +165,7 @@ class DecisionService:
     # ------------------------------------------------------------------
 
     @staticmethod
-    def _weather_failures(forecast: DailyForecast, config: LaundryTaskConfig) -> list[str]:
+    def _weather_failures(forecast: DailyForecast, config: FlexibleTaskConfig) -> list[str]:
         """Return reasons the weather fails the gate, or an empty list if it passes."""
         reasons: list[str] = []
         if forecast.uv_index <= config.min_uv:
@@ -165,7 +178,9 @@ class DecisionService:
         return reasons
 
     @staticmethod
-    def _candidate_windows(prices: list[PricePoint], config: LaundryTaskConfig) -> list[_Candidate]:
+    def _candidate_windows(
+        prices: list[PricePoint], config: FlexibleTaskConfig
+    ) -> list[_Candidate]:
         """Build all contiguous candidate windows inside the allowed time range.
 
         A candidate is ``duration_slots`` consecutive 30-minute slots where:
@@ -175,15 +190,15 @@ class DecisionService:
 
         Args:
             prices: Half-hourly prices (any order).
-            config: User constraints.
+            config: The task's constraints.
 
         Returns:
             A list of ``_Candidate`` windows; empty if none fit.
         """
         ordered = sorted(prices, key=lambda p: p.timestamp)
         n = config.duration_slots
-        earliest = config.earliest_start_time
-        latest = config.latest_finish_time
+        earliest = parse_hhmm(config.earliest_start)
+        latest = parse_hhmm(config.latest_finish)
 
         candidates: list[_Candidate] = []
         for i in range(len(ordered) - n + 1):
