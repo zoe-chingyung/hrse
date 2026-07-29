@@ -94,7 +94,7 @@ class LaundryTaskConfig(_TaskConfigBase):
     """
 
     task_name: str = Field(default="laundry", description="Task identifier")
-    target_runs_per_week: int = Field(..., ge=1, description="Desired laundry runs per week")
+    target_runs_per_week: int = Field(default=2, ge=1, description="Desired laundry runs per week")
     duration_slots: int = Field(
         default=4,
         ge=1,
@@ -243,3 +243,17 @@ class EVChargingConfig(_TaskConfigBase):
     max_rain_probability: int = Field(
         default=100, ge=0, le=100, description="Unused — no weather gate for charging"
     )
+
+
+# ---------------------------------------------------------------------------
+# Task registry (Sprint 5C) — maps a ChatSettings.enabled_tasks key to its
+# config class. Every value is default-constructible (Cls()) since none of
+# their fields are required, which is what lets schedule_handler build a
+# config for any enabled task without task-specific wiring.
+# ---------------------------------------------------------------------------
+
+TASK_REGISTRY: dict[str, type[FlexibleTaskConfig]] = {
+    "laundry": LaundryTaskConfig,
+    "dishwasher": DishwasherConfig,
+    "ev": EVChargingConfig,
+}

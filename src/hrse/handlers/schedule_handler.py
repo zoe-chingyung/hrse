@@ -50,7 +50,7 @@ from aws_lambda_powertools import Logger, Tracer
 from hrse.clients.octopus import OctopusClientProtocol, get_octopus_client
 from hrse.clients.weather import WeatherClientProtocol, get_weather_client
 from hrse.config import get_settings
-from hrse.models.task_config import LaundryTaskConfig
+from hrse.models.task_config import TASK_REGISTRY, LaundryTaskConfig
 from hrse.services.decision_engine import DecisionService
 from hrse.services.notification import NotificationKind, NotificationService
 from hrse.services.weekly_state import WeeklyStateService
@@ -63,6 +63,8 @@ if TYPE_CHECKING:
     from aws_lambda_powertools.utilities.typing import LambdaContext
 
     from hrse.models.chat_settings import ChatSettings
+    from hrse.models.recommendation import Recommendation
+    from hrse.models.task_config import FlexibleTaskConfig
     from hrse.store.protocol import EventStore
 
 logger = Logger()
@@ -155,14 +157,12 @@ def handler(
     summary = weekly_service.get_summary()
     logger.info("Weekly summary", extra={"laundry_count": summary.laundry_count})
 
-    # Run the decision engine using the household-wide global config. This
-    # single recommendation drives the response body / log line below.
-    # NOTE (Sprint 5B): each chat's *message* is formatted from its own
-    # per-chat recommendation further down (profile precedence via
-    # LaundryTaskConfig.from_profile_or_settings), which can differ from
-    # this one. The body intentionally stays a single flag rather than
-    # growing a per-chat schema, since nothing currently consumes it beyond
-    # logging/tests.
+    # Run the decision engine once using the household-wide global config.
+    # This single laundry recommendation drives the response body / log
+    # line below. The body intentionally stays a single flag rather than
+    # growing a per-chat/per-task schema, since nothing currently consumes
+    # it beyond logging/tests — each chat's *message* is built separately
+    # below from its own enabled tasks and profile.
     global_settings = get_settings()
     recommendation = DecisionService().evaluate(
         summary=summary,
@@ -175,24 +175,46 @@ def handler(
         extra={"recommended": recommendation.recommended, "reasons": recommendation.reasons},
     )
 
-    # Format and send a per-chat Telegram notification, honouring each
-    # chat's own profile (Sprint 5B) where one has been configured.
+    # Format and send a per-chat Telegram notification: one recommendation
+    # per enabled task (Sprint 5C), honouring the chat's own laundry profile
+    # (Sprint 5B) where one has been configured. Chats with no stored
+    # settings default to ["laundry"], matching pre-5C behaviour exactly.
     for chat_id in chat_ids:
         chat_settings = _safe_get_chat_settings(settings_store, chat_id)
         profile = chat_settings.profile if chat_settings is not None else None
+        enabled_tasks = chat_settings.enabled_tasks if chat_settings is not None else ["laundry"]
 
-        chat_recommendation = recommendation
-        if profile is not None:
-            chat_config = LaundryTaskConfig.from_profile_or_settings(profile, global_settings)
-            chat_recommendation = DecisionService().evaluate(
-                summary=summary, prices=prices, forecast=forecast, config=chat_config
+        chat_recommendations: list[Recommendation] = []
+        for task_name in enabled_tasks:
+            task_config: FlexibleTaskConfig
+            if task_name == "laundry":
+                task_config = LaundryTaskConfig.from_profile_or_settings(profile, global_settings)
+            else:
+                config_cls = TASK_REGISTRY.get(task_name)
+                if config_cls is None:
+                    logger.warning(
+                        "Unknown enabled task; skipping",
+                        extra={"chat_id": chat_id, "task": task_name},
+                    )
+                    continue
+                task_config = config_cls()
+            chat_recommendations.append(
+                DecisionService().evaluate(
+                    summary=summary, prices=prices, forecast=forecast, config=task_config
+                )
             )
+
+        if not chat_recommendations:
+            logger.warning("No valid enabled tasks; nothing to send", extra={"chat_id": chat_id})
+            continue
 
         tz_name = profile.timezone if profile is not None and profile.timezone else None
         display_tz = ZoneInfo(tz_name or global_settings.display_timezone)
-        message = NotificationService(display_tz=display_tz).format(chat_recommendation, kind)
+        message = NotificationService(display_tz=display_tz).format_multi(
+            chat_recommendations, kind
+        )
         telegram.send_message(chat_id=chat_id, text=message)
-        logger.info("Notification sent", extra={"chat_id": chat_id})
+        logger.info("Notification sent", extra={"chat_id": chat_id, "tasks": enabled_tasks})
 
     return {
         "statusCode": 200,

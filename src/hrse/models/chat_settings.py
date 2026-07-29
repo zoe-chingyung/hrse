@@ -106,6 +106,11 @@ class ChatSettings(BaseModel):
         onboarding_step: Index of the current ``/setup`` question this chat
                          is answering, or None when no onboarding is active.
                          Transient — cleared once ``/setup`` completes.
+        enabled_tasks:   Task registry keys (see
+                         ``hrse.models.task_config.TASK_REGISTRY``) this chat
+                         wants recommendations for. Defaults to
+                         ``["laundry"]`` so pre-5C chats behave unchanged.
+                         Managed via /tasks, /add_task, /remove_task.
         updated_at:      UTC timestamp of the last settings change.
     """
 
@@ -118,5 +123,9 @@ class ChatSettings(BaseModel):
     )
     onboarding_step: int | None = Field(
         default=None, description="Current /setup question index, or None if not onboarding"
+    )
+    enabled_tasks: list[str] = Field(
+        default_factory=lambda: ["laundry"],
+        description="Task registry keys this chat gets recommendations for",
     )
     updated_at: datetime = Field(..., description="UTC timestamp of last update")

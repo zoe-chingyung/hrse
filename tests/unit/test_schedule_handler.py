@@ -299,3 +299,62 @@ class TestPerChatProfile:
         response, mock_telegram = _invoke("DailyPlanning", settings_store=broken)
         assert json.loads(response["body"])["recommended"] is True
         mock_telegram.send_message.assert_called_once()
+
+
+# ---------------------------------------------------------------------------
+# Sprint 5C — multi-task notifications via enabled_tasks / TASK_REGISTRY
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit()
+class TestMultiTaskNotifications:
+    def test_default_enabled_tasks_produces_single_task_message(self) -> None:
+        # No stored settings → enabled_tasks defaults to ["laundry"], so the
+        # message must be the same single-block output as pre-5C.
+        _, mock_telegram = _invoke("DailyPlanning")
+        _, kwargs = mock_telegram.send_message.call_args
+        assert "Dishwasher" not in kwargs["text"]
+        assert "🏠 <b>Tomorrow's Energy Plan</b>" in kwargs["text"]
+
+    def test_chat_with_two_enabled_tasks_gets_both_blocks(self) -> None:
+        store = _StubSettingsStore(
+            {
+                123456789: ChatSettings(
+                    chat_id=123456789,
+                    enabled_tasks=["laundry", "dishwasher"],
+                    updated_at=datetime.now(tz=UTC),
+                )
+            }
+        )
+        _, mock_telegram = _invoke("DailyPlanning", settings_store=store)
+        _, kwargs = mock_telegram.send_message.call_args
+        assert "Laundry" in kwargs["text"]
+        assert "Dishwasher" in kwargs["text"]
+
+    def test_unknown_enabled_task_is_skipped_not_fatal(self) -> None:
+        store = _StubSettingsStore(
+            {
+                123456789: ChatSettings(
+                    chat_id=123456789,
+                    enabled_tasks=["laundry", "bogus_task"],
+                    updated_at=datetime.now(tz=UTC),
+                )
+            }
+        )
+        response, mock_telegram = _invoke("DailyPlanning", settings_store=store)
+        assert response["statusCode"] == 200
+        mock_telegram.send_message.assert_called_once()
+
+    def test_all_enabled_tasks_unknown_sends_no_message(self) -> None:
+        store = _StubSettingsStore(
+            {
+                123456789: ChatSettings(
+                    chat_id=123456789,
+                    enabled_tasks=["bogus_task"],
+                    updated_at=datetime.now(tz=UTC),
+                )
+            }
+        )
+        response, mock_telegram = _invoke("DailyPlanning", settings_store=store)
+        assert response["statusCode"] == 200
+        mock_telegram.send_message.assert_not_called()

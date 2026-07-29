@@ -267,3 +267,91 @@ class TestNotificationServiceTimezoneLabel:
         )
         assert "BST" in svc.format(summer, NotificationKind.REMINDER)
         assert "GMT" in svc.format(winter, NotificationKind.REMINDER)
+
+
+# ---------------------------------------------------------------------------
+# NotificationService.format_multi — Sprint 5C multi-task messages
+# ---------------------------------------------------------------------------
+
+
+def _dishwasher_rec(recommended: bool = True) -> Recommendation:
+    if not recommended:
+        return Recommendation(task="dishwasher", recommended=False, reasons=["target already met"])
+    return Recommendation(
+        task="dishwasher",
+        recommended=True,
+        window=RecommendationWindow(
+            start=datetime(2026, 6, 24, 9, 0, tzinfo=UTC),
+            end=datetime(2026, 6, 24, 10, 30, tzinfo=UTC),
+        ),
+        expected_price_pence=5.0,
+        reasons=["cost within budget"],
+    )
+
+
+@pytest.mark.unit()
+class TestFormatMultiSingleTaskRegression:
+    """A single recommendation must render byte-identical to format()."""
+
+    def test_single_recommendation_planning_matches_format(self) -> None:
+        svc = _service()
+        rec = _rec_yes()
+        assert svc.format_multi([rec], NotificationKind.PLANNING) == svc.format(
+            rec, NotificationKind.PLANNING
+        )
+
+    def test_single_recommendation_reminder_matches_format(self) -> None:
+        svc = _service()
+        rec = _rec_yes()
+        assert svc.format_multi([rec], NotificationKind.REMINDER) == svc.format(
+            rec, NotificationKind.REMINDER
+        )
+
+    def test_single_not_recommended_matches_format(self) -> None:
+        svc = _service()
+        rec = _rec_no()
+        assert svc.format_multi([rec], NotificationKind.PLANNING) == svc.format(
+            rec, NotificationKind.PLANNING
+        )
+
+
+@pytest.mark.unit()
+class TestFormatMultiMultipleTasks:
+    def test_raises_on_empty_list(self) -> None:
+        with pytest.raises(ValueError, match="at least one"):
+            _service().format_multi([], NotificationKind.PLANNING)
+
+    def test_planning_has_one_block_per_task(self) -> None:
+        text = _service().format_multi([_rec_yes(), _dishwasher_rec()], NotificationKind.PLANNING)
+        assert "Laundry" in text
+        assert "Dishwasher" in text
+
+    def test_planning_keeps_overall_header(self) -> None:
+        text = _service().format_multi([_rec_yes(), _dishwasher_rec()], NotificationKind.PLANNING)
+        assert "Tomorrow's Energy Plan" in text
+
+    def test_reminder_has_one_block_per_task(self) -> None:
+        text = _service().format_multi([_rec_yes(), _dishwasher_rec()], NotificationKind.REMINDER)
+        assert "Laundry" in text
+        assert "Dishwasher" in text
+        assert "Morning Reminder" in text
+
+    def test_not_recommended_task_shows_in_its_own_block(self) -> None:
+        text = _service().format_multi(
+            [_rec_yes(), _dishwasher_rec(recommended=False)], NotificationKind.PLANNING
+        )
+        assert "target already met" in text
+
+    def test_laundry_done_prompt_only_on_laundry_block(self) -> None:
+        text = _service().format_multi([_rec_yes(), _dishwasher_rec()], NotificationKind.REMINDER)
+        assert text.count("/laundry_done") == 1
+
+    def test_unmapped_task_name_falls_back_to_title_case_label(self) -> None:
+        rec = Recommendation(task="gardening", recommended=False, reasons=["r"])
+        text = _service().format_multi([_rec_yes(), rec], NotificationKind.PLANNING)
+        assert "Gardening" in text
+
+    def test_ev_charging_uses_its_mapped_label(self) -> None:
+        rec = Recommendation(task="ev_charging", recommended=False, reasons=["r"])
+        text = _service().format_multi([_rec_yes(), rec], NotificationKind.PLANNING)
+        assert "EV Charging" in text

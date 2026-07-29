@@ -7,7 +7,13 @@ from pydantic import ValidationError
 
 from hrse.config import Settings
 from hrse.models.chat_settings import TaskProfile
-from hrse.models.task_config import DishwasherConfig, EVChargingConfig, LaundryTaskConfig
+from hrse.models.task_config import (
+    TASK_REGISTRY,
+    DishwasherConfig,
+    EVChargingConfig,
+    FlexibleTaskConfig,
+    LaundryTaskConfig,
+)
 
 # ---------------------------------------------------------------------------
 # Existing validation behaviour
@@ -177,3 +183,39 @@ class TestEVChargingConfig:
     def test_invalid_hhmm_rejected(self) -> None:
         with pytest.raises(ValidationError, match="HH:MM"):
             EVChargingConfig(latest_finish="not-a-time")
+
+
+class TestLaundryTaskConfigDefaultTarget:
+    def test_target_runs_per_week_now_has_a_default(self) -> None:
+        # Sprint 5C: needed so TASK_REGISTRY["laundry"]() is uniformly
+        # constructible with zero args, like the other task configs.
+        config = LaundryTaskConfig()
+        assert config.target_runs_per_week == 2
+
+
+# ---------------------------------------------------------------------------
+# TASK_REGISTRY — Sprint 5C
+# ---------------------------------------------------------------------------
+
+
+class TestTaskRegistry:
+    def test_registry_has_expected_keys(self) -> None:
+        assert set(TASK_REGISTRY) == {"laundry", "dishwasher", "ev"}
+
+    def test_every_registry_entry_is_default_constructible(self) -> None:
+        for config_cls in TASK_REGISTRY.values():
+            instance = config_cls()
+            assert isinstance(instance, FlexibleTaskConfig)
+
+    def test_registry_values_produce_distinct_task_names(self) -> None:
+        task_names = {config_cls().task_name for config_cls in TASK_REGISTRY.values()}
+        assert task_names == {"laundry", "dishwasher", "ev_charging"}
+
+    def test_laundry_key_maps_to_laundry_task_config(self) -> None:
+        assert TASK_REGISTRY["laundry"] is LaundryTaskConfig
+
+    def test_dishwasher_key_maps_to_dishwasher_config(self) -> None:
+        assert TASK_REGISTRY["dishwasher"] is DishwasherConfig
+
+    def test_ev_key_maps_to_ev_charging_config(self) -> None:
+        assert TASK_REGISTRY["ev"] is EVChargingConfig

@@ -1,6 +1,7 @@
 """NotificationService — formats recommendations into Telegram messages.
 
-Sprint 4 — Notification layer.
+Sprint 4  — Notification layer.
+Sprint 5C — Multi-task messages (one block per enabled task).
 
 This service is pure: it has no AWS, network, or storage dependencies.
 It takes a ``Recommendation`` and a ``NotificationKind`` and returns a
@@ -18,6 +19,7 @@ from enum import Enum
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from collections.abc import Sequence
     from datetime import datetime
     from zoneinfo import ZoneInfo
 
@@ -29,6 +31,20 @@ class NotificationKind(str, Enum):
 
     PLANNING = "planning"
     REMINDER = "reminder"
+
+
+# Display label per task registry key / Recommendation.task value. Falls
+# back to a title-cased version of the raw task string for anything unlisted.
+_TASK_LABELS: dict[str, str] = {
+    "laundry": "🧺 Laundry",
+    "dishwasher": "🍽 Dishwasher",
+    "ev_charging": "🔌 EV Charging",
+}
+
+
+def _task_label(task: str) -> str:
+    """Return a display label for ``task``, falling back to a generic one."""
+    return _TASK_LABELS.get(task, task.replace("_", " ").title())
 
 
 class NotificationService:
@@ -56,6 +72,45 @@ class NotificationService:
         if kind == NotificationKind.PLANNING:
             return self._format_planning(rec)
         return self._format_reminder(rec)
+
+    def format_multi(
+        self, recommendations: Sequence[Recommendation], kind: NotificationKind
+    ) -> str:
+        """Format one message covering every enabled task's recommendation.
+
+        With exactly one recommendation this delegates to ``format()``, so a
+        chat with only "laundry" enabled (the pre-5C default) gets a
+        byte-identical message to before multi-task support existed. With
+        more than one, renders a single header followed by one block per
+        task, in the order given.
+
+        Args:
+            recommendations: One ``Recommendation`` per enabled task, non-empty.
+            kind:             Whether this is the planning or reminder message.
+
+        Returns:
+            A UTF-8 string with Telegram HTML formatting.
+
+        Raises:
+            ValueError: If ``recommendations`` is empty.
+        """
+        if not recommendations:
+            raise ValueError("format_multi requires at least one Recommendation")
+        if len(recommendations) == 1:
+            return self.format(recommendations[0], kind)
+
+        header = (
+            "🏠 <b>Tomorrow's Energy Plan</b>"
+            if kind == NotificationKind.PLANNING
+            else "⏰ <b>Morning Reminder</b>"
+        )
+        block_fn = (
+            self._task_block_planning
+            if kind == NotificationKind.PLANNING
+            else self._task_block_reminder
+        )
+        blocks = [block_fn(rec) for rec in recommendations]
+        return "\n\n".join([header, *blocks])
 
     # ------------------------------------------------------------------
     # Private formatters
@@ -114,4 +169,35 @@ class NotificationService:
             for r in rec.reasons:
                 lines.append(f"  • {r}")
 
+        return "\n".join(lines)
+
+    def _task_block_planning(self, rec: Recommendation) -> str:
+        """One task's block within a multi-task planning message."""
+        lines = [f"<b>{_task_label(rec.task)}</b>"]
+        if rec.recommended and rec.window is not None:
+            lines.append("✅ Recommended")
+            lines.append(f"🕐 Best window: {self._fmt_window(rec.window.start, rec.window.end)}")
+            if rec.expected_price_pence is not None:
+                lines.append(f"⚡ Estimated cost: {rec.expected_price_pence}p")
+            for r in rec.reasons:
+                lines.append(f"  ✓ {r}")
+        else:
+            lines.append("❌ Not recommended")
+            for r in rec.reasons:
+                lines.append(f"  • {r}")
+        return "\n".join(lines)
+
+    def _task_block_reminder(self, rec: Recommendation) -> str:
+        """One task's block within a multi-task reminder message."""
+        lines = [f"<b>{_task_label(rec.task)}</b>"]
+        if rec.recommended and rec.window is not None:
+            lines.append(f"🕐 Window: {self._fmt_window(rec.window.start, rec.window.end)}")
+            if rec.expected_price_pence is not None:
+                lines.append(f"⚡ Estimated cost: {rec.expected_price_pence}p")
+            if rec.task == "laundry":
+                lines.append("Reply /laundry_done when finished.")
+        else:
+            lines.append("😴 Not needed today.")
+            for r in rec.reasons:
+                lines.append(f"  • {r}")
         return "\n".join(lines)
