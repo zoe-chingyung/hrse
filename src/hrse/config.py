@@ -71,6 +71,15 @@ class Settings(BaseSettings):
         description="IANA timezone for user-facing time display",
     )
 
+    # Length of one flexible-task run as a count of consecutive 30-minute
+    # slots (4 = 2 hours). Used by /prices to highlight the cheapest
+    # contiguous window of this length. Mirrors LaundryTaskConfig.duration_slots.
+    duration_slots: int = Field(
+        default=4,
+        ge=1,
+        description="Consecutive 30-min slots per run (4 = 2 hours)",
+    )
+
     # Feature flag: enable experimental optimiser (Sprint 3+)
     enable_optimiser: bool = Field(default=False, description="Enable experimental optimiser")
 

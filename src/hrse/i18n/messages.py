@@ -31,6 +31,7 @@ class MessageKey(StrEnum):
     PRICES_HEADER_TOMORROW = auto()
     PRICES_TOMORROW_UNAVAILABLE = auto()
     PRICES_UNAVAILABLE = auto()
+    PRICES_BEST_WINDOW = auto()
     PRICES_CHEAPEST = auto()
     PRICES_MOST_EXPENSIVE = auto()
     PRICES_AVERAGE = auto()
@@ -104,6 +105,10 @@ _CATALOGUE: dict[MessageKey, dict[Language, str]] = {
     MessageKey.PRICES_UNAVAILABLE: {
         Language.EN: "⚠️ No price data available right now. Try again later.",
         Language.ZH: "⚠️ 而家攞唔到電價數據,遲啲再試。",
+    },
+    MessageKey.PRICES_BEST_WINDOW: {
+        Language.EN: "🎯 Best {hours}h window: <b>{window}</b> (avg <b>{price}p</b>/kWh)",
+        Language.ZH: "🎯 最抵 {hours} 小時窗口:<b>{window}</b>(平均 <b>{price}p</b>/kWh)",
     },
     MessageKey.PRICES_CHEAPEST: {
         Language.EN: "▼ Cheapest: <b>{price}p</b> @ {window}",

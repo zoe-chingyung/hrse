@@ -26,56 +26,100 @@ def _day_of_points(prices: list[float]) -> list[PricePoint]:
     ]
 
 
-class TestRenderPriceChart:
+def _bars_of(text: str) -> list[str]:
+    """Extract the bar-chart lines from the <pre> block."""
+    return text.split("<pre>")[1].split("</pre>")[0].strip().splitlines()
+
+
+class TestBestWindowSummary:
+    def test_summary_line_present_and_localised(self) -> None:
+        points = _day_of_points([30.0, 5.0, 6.0, 7.0, 30.0])
+        en = render_price_chart(points, Language.EN, _LONDON, window_slots=3)
+        zh = render_price_chart(points, Language.ZH, _LONDON, window_slots=3)
+        assert "Best 1.5h window" in en
+        assert "最抵 1.5 小時窗口" in zh
+
+    def test_summary_picks_cheapest_contiguous_run(self) -> None:
+        # Cheapest 2-slot run is indices 3–4 (avg 5.0), not the single dip at 1.
+        points = _day_of_points([30.0, 2.0, 30.0, 5.0, 5.0, 30.0])
+        text = render_price_chart(points, Language.EN, _LONDON, window_slots=2)
+        # Window starts at slot 3 == 01:30 BST, ends after slot 4 == 02:30 BST.
+        assert "01:30\u201302:30" in text
+        assert "avg <b>5.00p</b>" in text
+
+    def test_window_shrinks_when_fewer_points_than_slots(self) -> None:
+        points = _day_of_points([10.0, 12.0])
+        text = render_price_chart(points, Language.EN, _LONDON, window_slots=4)
+        assert len(_bars_of(text)) == 2  # only two slots available
+
+    def test_hours_formats_whole_and_half(self) -> None:
+        points = _day_of_points([10.0] * 6)
+        assert "Best 2h window" in render_price_chart(points, Language.EN, _LONDON, window_slots=4)
+        assert "Best 1.5h window" in render_price_chart(
+            points, Language.EN, _LONDON, window_slots=3
+        )
+
+
+class TestBarChart:
+    def test_one_bar_line_per_window_slot(self) -> None:
+        points = _day_of_points([10.0, 5.0, 6.0, 7.0, 40.0])
+        text = render_price_chart(points, Language.EN, _LONDON, window_slots=3)
+        assert len(_bars_of(text)) == 3
+
+    def test_bar_line_shows_label_and_price(self) -> None:
+        points = _day_of_points([5.0, 6.0])
+        text = render_price_chart(points, Language.EN, _LONDON, window_slots=2)
+        first = _bars_of(text)[0]
+        assert first.startswith("00:00")
+        assert "5.00p" in first
+
+    def test_full_price_bar_is_longer_than_cheap_bar(self) -> None:
+        # Window covers both; dearer slot's bar should have more full blocks.
+        points = _day_of_points([4.0, 40.0])
+        text = render_price_chart(points, Language.EN, _LONDON, window_slots=2)
+        rows = _bars_of(text)
+        assert rows[1].count("\u2588") > rows[0].count("\u2588")
+
+    def test_negative_price_shows_plunge_marker(self) -> None:
+        points = _day_of_points([-3.0, 20.0])
+        text = render_price_chart(points, Language.EN, _LONDON, window_slots=2)
+        assert "\u25c0" in text  # plunge marker
+        assert "-3.00p" in text
+
+    def test_zero_max_produces_empty_bars_without_error(self) -> None:
+        points = _day_of_points([0.0, 0.0])
+        text = render_price_chart(points, Language.EN, _LONDON, window_slots=2)
+        assert len(_bars_of(text)) == 2
+
+
+class TestWholeDayStats:
+    def test_stats_lines_present_and_localised(self) -> None:
+        points = _day_of_points([10.0, 5.0, 30.0])
+        en = render_price_chart(points, Language.EN, _LONDON, window_slots=2)
+        zh = render_price_chart(points, Language.ZH, _LONDON, window_slots=2)
+        assert "Cheapest" in en and "5.00p" in en
+        assert "最平" in zh and "5.00p" in zh
+        assert "Average" in en and "平均" in zh
+
+    def test_stats_span_whole_day_not_just_window(self) -> None:
+        # Most-expensive (40) sits outside the cheapest 2-slot window.
+        points = _day_of_points([5.0, 6.0, 40.0])
+        text = render_price_chart(points, Language.EN, _LONDON, window_slots=2)
+        assert "40.00p" in text  # dearest still reported
+
+    def test_cheapest_window_uses_display_timezone(self) -> None:
+        # Cheapest slot starts 23:00 UTC == 00:00 BST.
+        points = _day_of_points([5.0, 10.0])
+        text = render_price_chart(points, Language.EN, _LONDON, window_slots=1)
+        assert "00:00\u201300:30" in text
+
+
+class TestGuards:
     def test_empty_points_raises(self) -> None:
         with pytest.raises(ValueError, match="at least one"):
             render_price_chart([], Language.EN, _LONDON)
 
-    def test_full_day_renders_two_rows_of_24_blocks(self) -> None:
-        points = _day_of_points([10.0 + i * 0.5 for i in range(48)])
-        text = render_price_chart(points, Language.EN, _LONDON)
-        pre = text.split("<pre>")[1].split("</pre>")[0].strip().splitlines()
-        assert len(pre) == 2
-        for row in pre:
-            label, bars = row.split(" ", 1)
-            assert len(bars) == 24
-        assert pre[0].startswith("00:00")
-        assert pre[1].startswith("12:00")
-
-    def test_min_and_max_get_extreme_blocks(self) -> None:
-        points = _day_of_points([20.0, 5.0, 35.0, 20.0])
-        text = render_price_chart(points, Language.EN, _LONDON)
-        bars = text.split("<pre>")[1].split("</pre>")[0].strip().split(" ", 1)[1]
-        assert bars[1] == "▁"  # cheapest slot
-        assert bars[2] == "█"  # most expensive slot
-
-    def test_flat_prices_do_not_divide_by_zero(self) -> None:
-        points = _day_of_points([15.0] * 4)
-        text = render_price_chart(points, Language.EN, _LONDON)
-        assert "▄" in text
-
-    def test_negative_plunge_prices_render(self) -> None:
-        points = _day_of_points([-2.0, 10.0, 30.0])
-        text = render_price_chart(points, Language.EN, _LONDON)
-        assert "-2.00p" in text
-
-    def test_stats_lines_present_and_localised(self) -> None:
-        points = _day_of_points([10.0, 5.0, 30.0])
-        en = render_price_chart(points, Language.EN, _LONDON)
-        zh = render_price_chart(points, Language.ZH, _LONDON)
-        assert "Cheapest" in en and "5.00p" in en
-        assert "最平" in zh and "5.00p" in zh
-        assert "Average" in en
-        assert "平均" in zh
-
-    def test_window_times_use_display_timezone(self) -> None:
-        # Cheapest slot starts 23:00 UTC == 00:00 BST.
-        points = _day_of_points([5.0, 10.0])
-        text = render_price_chart(points, Language.EN, _LONDON)
-        assert "00:00–00:30" in text
-
-    def test_partial_day_renders_short_row(self) -> None:
-        points = _day_of_points([10.0, 12.0, 14.0])
-        text = render_price_chart(points, Language.EN, _LONDON)
-        bars = text.split("<pre>")[1].split("</pre>")[0].strip().split(" ", 1)[1]
-        assert len(bars) == 3
+    def test_zero_window_slots_raises(self) -> None:
+        points = _day_of_points([10.0])
+        with pytest.raises(ValueError, match="window_slots"):
+            render_price_chart(points, Language.EN, _LONDON, window_slots=0)
