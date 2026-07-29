@@ -198,3 +198,32 @@ class TestDefaultEventType:
     def test_unknown_detail_type_defaults_to_planning(self) -> None:
         response, _ = _invoke("UnknownType")
         assert json.loads(response["body"])["kind"] == "planning"
+
+
+# ---------------------------------------------------------------------------
+# Sprint 5A — env-driven config flows into the decision engine
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit()
+class TestEnvDrivenConfig:
+    def test_wash_budget_env_var_flows_into_recommendation(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Prices average 7.0p/kWh * 1.5kWh = 10.5p total. A budget of 1p
+        # (well under that) must make the engine decline for every window,
+        # proving the env var — not the deleted hardcoded default (40p) —
+        # is what the handler actually uses.
+        monkeypatch.setenv("HRSE_WASH_BUDGET_PENCE", "1")
+        response, _ = _invoke("DailyPlanning")
+        assert json.loads(response["body"])["recommended"] is False
+
+    def test_max_rain_probability_env_var_flows_into_recommendation(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # _good_forecast has 15% rain. Lowering the threshold below that
+        # must make the weather gate reject it, proving the env var reaches
+        # the engine rather than the deleted hardcoded default (40%).
+        monkeypatch.setenv("HRSE_MAX_RAIN_PROBABILITY", "10")
+        response, _ = _invoke("DailyPlanning")
+        assert json.loads(response["body"])["recommended"] is False

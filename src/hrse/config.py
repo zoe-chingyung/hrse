@@ -80,6 +80,30 @@ class Settings(BaseSettings):
         description="Consecutive 30-min slots per run (4 = 2 hours)",
     )
 
+    # ------------------------------------------------------------------
+    # Global laundry task defaults (Sprint 5A). Mirrors LaundryTaskConfig
+    # field-for-field so every threshold is redeploy-free and forkable.
+    # Per-chat overrides (Sprint 5B) take precedence over these when set;
+    # see LaundryTaskConfig.from_settings() / from_profile_or_settings().
+    # HH:MM strings are validated when LaundryTaskConfig is constructed
+    # from these settings, not here, so the validation logic lives in one
+    # place (LaundryTaskConfig itself).
+    # ------------------------------------------------------------------
+
+    laundry_target_per_week: int = Field(
+        default=2, ge=1, description="Desired laundry runs per week"
+    )
+    earliest_start: str = Field(default="08:00", description="Earliest start time, HH:MM")
+    latest_finish: str = Field(default="22:00", description="Latest finish time, HH:MM")
+    wash_budget_pence: float = Field(
+        default=40.0, gt=0, description="Max spend per wash cycle in pence"
+    )
+    machine_kwh: float = Field(default=1.5, gt=0, description="Energy per wash cycle in kWh")
+    min_uv: float = Field(default=3.0, ge=0, description="Lower UV threshold")
+    max_rain_probability: int = Field(
+        default=40, ge=0, le=100, description="Upper rain probability threshold (percent)"
+    )
+
     # Feature flag: enable experimental optimiser (Sprint 3+)
     enable_optimiser: bool = Field(default=False, description="Enable experimental optimiser")
 

@@ -11,8 +11,12 @@ never re-parses raw strings.
 from __future__ import annotations
 
 from datetime import time
+from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+if TYPE_CHECKING:
+    from hrse.config import Settings
 
 
 def _parse_hhmm(value: str) -> time:
@@ -98,6 +102,35 @@ class LaundryTaskConfig(BaseModel):
         if self.latest_finish_time <= self.earliest_start_time:
             raise ValueError("latest_finish must be after earliest_start")
         return self
+
+    # ------------------------------------------------------------------
+    # Construction from global Settings (Sprint 5A)
+    # ------------------------------------------------------------------
+
+    @classmethod
+    def from_settings(cls, settings: Settings) -> LaundryTaskConfig:
+        """Build a ``LaundryTaskConfig`` from environment-driven global ``Settings``.
+
+        This is the single mapping between ``HRSE_*`` env vars and the
+        engine's constraint model — keep it as the only place that reads
+        laundry-related fields off ``Settings``.
+
+        Args:
+            settings: The application's global ``Settings`` instance.
+
+        Returns:
+            A validated ``LaundryTaskConfig`` built from the global defaults.
+        """
+        return cls(
+            target_runs_per_week=settings.laundry_target_per_week,
+            duration_slots=settings.duration_slots,
+            earliest_start=settings.earliest_start,
+            latest_finish=settings.latest_finish,
+            wash_budget_pence=settings.wash_budget_pence,
+            machine_kwh=settings.machine_kwh,
+            min_uv=settings.min_uv,
+            max_rain_probability=settings.max_rain_probability,
+        )
 
     # ------------------------------------------------------------------
     # Convenience accessors — parsed once, no raw-string handling downstream

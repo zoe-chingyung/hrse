@@ -65,21 +65,6 @@ if TYPE_CHECKING:
 logger = Logger()
 tracer = Tracer()
 
-# ---------------------------------------------------------------------------
-# Default laundry config — will become config-driven in a future sprint
-# ---------------------------------------------------------------------------
-
-_DEFAULT_CONFIG = LaundryTaskConfig(
-    target_runs_per_week=2,
-    duration_slots=4,  # 4 x 30 min = 2-hour run
-    earliest_start="08:00",
-    latest_finish="22:00",
-    wash_budget_pence=40.0,
-    machine_kwh=1.5,
-    min_uv=3.0,
-    max_rain_probability=40,
-)
-
 _DETAIL_TYPE_PLANNING = "DailyPlanning"
 _DETAIL_TYPE_REMINDER = "MorningReminder"
 
@@ -169,7 +154,7 @@ def handler(
         summary=summary,
         prices=prices,
         forecast=forecast,
-        config=_DEFAULT_CONFIG,
+        config=LaundryTaskConfig.from_settings(get_settings()),
     )
     logger.info(
         "Decision made",
