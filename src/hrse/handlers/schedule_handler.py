@@ -32,9 +32,10 @@ delegate to pure services, return. No business logic lives here.
 
 Dependency injection
 --------------------
-``_octopus``, ``_weather``, ``_store``, ``_telegram``, and ``_chat_id``
-are keyword-only parameters accepted for testing. Production callers omit
-them; the handler resolves real instances from LRU-cached factories.
+``_octopus``, ``_weather``, ``_store``, ``_settings_store``, ``_telegram``,
+and ``_chat_id`` are keyword-only parameters accepted for testing.
+Production callers omit them; the handler resolves real instances from
+LRU-cached factories.
 """
 
 from __future__ import annotations
@@ -53,6 +54,7 @@ from hrse.models.task_config import LaundryTaskConfig
 from hrse.services.decision_engine import DecisionService
 from hrse.services.notification import NotificationKind, NotificationService
 from hrse.services.weekly_state import WeeklyStateService
+from hrse.store.chat_settings_store import ChatSettingsStore, get_chat_settings_store
 from hrse.store.s3_store import get_event_store
 from hrse.telegram.client import TelegramClientProtocol, get_telegram_client
 from hrse.telegram.token_provider import get_chat_ids_provider
@@ -60,6 +62,7 @@ from hrse.telegram.token_provider import get_chat_ids_provider
 if TYPE_CHECKING:
     from aws_lambda_powertools.utilities.typing import LambdaContext
 
+    from hrse.models.chat_settings import ChatSettings
     from hrse.store.protocol import EventStore
 
 logger = Logger()
@@ -78,6 +81,7 @@ def handler(
     _octopus: OctopusClientProtocol | None = None,
     _weather: WeatherClientProtocol | None = None,
     _store: EventStore | None = None,
+    _settings_store: ChatSettingsStore | None = None,
     _telegram: TelegramClientProtocol | None = None,
     _chat_id: int | None = None,
     _chat_ids: list[int] | None = None,
@@ -85,15 +89,16 @@ def handler(
     """Fetch data, run the decision engine, send a Telegram notification.
 
     Args:
-        event:     EventBridge invocation payload.
-        context:   Lambda runtime context.
-        _octopus:  Injected Octopus client (tests only).
-        _weather:  Injected weather client (tests only).
-        _store:    Injected event store (tests only).
-        _telegram: Injected Telegram client (tests only).
-        _chat_id:  Injected single chat ID (tests only, legacy).
-        _chat_ids: Injected chat ID list (tests only). Takes precedence over
-                   ``_chat_id`` when both are supplied.
+        event:           EventBridge invocation payload.
+        context:         Lambda runtime context.
+        _octopus:        Injected Octopus client (tests only).
+        _weather:        Injected weather client (tests only).
+        _store:          Injected event store (tests only).
+        _settings_store: Injected chat settings store (tests only).
+        _telegram:       Injected Telegram client (tests only).
+        _chat_id:        Injected single chat ID (tests only, legacy).
+        _chat_ids:       Injected chat ID list (tests only). Takes precedence
+                         over ``_chat_id`` when both are supplied.
 
     Returns:
         A JSON-serialisable dict with ``statusCode`` and ``body``.
@@ -105,6 +110,7 @@ def handler(
     octopus = _octopus if _octopus is not None else get_octopus_client()
     weather = _weather if _weather is not None else get_weather_client()
     store = _store if _store is not None else get_event_store()
+    settings_store = _settings_store if _settings_store is not None else get_chat_settings_store()
     telegram = _telegram if _telegram is not None else get_telegram_client()
 
     # Resolve target chat IDs.  _chat_ids > _chat_id > Secrets Manager.
@@ -149,22 +155,42 @@ def handler(
     summary = weekly_service.get_summary()
     logger.info("Weekly summary", extra={"laundry_count": summary.laundry_count})
 
-    # Run the decision engine.
+    # Run the decision engine using the household-wide global config. This
+    # single recommendation drives the response body / log line below.
+    # NOTE (Sprint 5B): each chat's *message* is formatted from its own
+    # per-chat recommendation further down (profile precedence via
+    # LaundryTaskConfig.from_profile_or_settings), which can differ from
+    # this one. The body intentionally stays a single flag rather than
+    # growing a per-chat schema, since nothing currently consumes it beyond
+    # logging/tests.
+    global_settings = get_settings()
     recommendation = DecisionService().evaluate(
         summary=summary,
         prices=prices,
         forecast=forecast,
-        config=LaundryTaskConfig.from_settings(get_settings()),
+        config=LaundryTaskConfig.from_settings(global_settings),
     )
     logger.info(
         "Decision made",
         extra={"recommended": recommendation.recommended, "reasons": recommendation.reasons},
     )
 
-    # Format and send the Telegram notification to all configured chats.
-    display_tz = ZoneInfo(get_settings().display_timezone)
-    message = NotificationService(display_tz=display_tz).format(recommendation, kind)
+    # Format and send a per-chat Telegram notification, honouring each
+    # chat's own profile (Sprint 5B) where one has been configured.
     for chat_id in chat_ids:
+        chat_settings = _safe_get_chat_settings(settings_store, chat_id)
+        profile = chat_settings.profile if chat_settings is not None else None
+
+        chat_recommendation = recommendation
+        if profile is not None:
+            chat_config = LaundryTaskConfig.from_profile_or_settings(profile, global_settings)
+            chat_recommendation = DecisionService().evaluate(
+                summary=summary, prices=prices, forecast=forecast, config=chat_config
+            )
+
+        tz_name = profile.timezone if profile is not None and profile.timezone else None
+        display_tz = ZoneInfo(tz_name or global_settings.display_timezone)
+        message = NotificationService(display_tz=display_tz).format(chat_recommendation, kind)
         telegram.send_message(chat_id=chat_id, text=message)
         logger.info("Notification sent", extra={"chat_id": chat_id})
 
@@ -179,3 +205,18 @@ def handler(
             }
         ),
     }
+
+
+def _safe_get_chat_settings(store: ChatSettingsStore, chat_id: int) -> ChatSettings | None:
+    """Fetch chat settings, tolerating store failures.
+
+    A settings lookup failure must never block a notification from being
+    sent — it just means that chat falls back to the global config.
+    """
+    try:
+        return store.get(chat_id)
+    except Exception:
+        logger.exception(
+            "Failed to load chat settings; using global defaults", extra={"chat_id": chat_id}
+        )
+        return None

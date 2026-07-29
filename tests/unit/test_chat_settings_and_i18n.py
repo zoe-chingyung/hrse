@@ -12,7 +12,7 @@ from pydantic import ValidationError
 
 from hrse.i18n import MessageKey, bilingual_welcome, t
 from hrse.i18n.messages import _CATALOGUE  # noqa: PLC2701 — completeness check
-from hrse.models.chat_settings import ChatSettings, Language
+from hrse.models.chat_settings import ChatSettings, Language, TaskProfile
 
 _NOW = datetime(2026, 7, 12, 10, 0, 0, tzinfo=UTC)
 
@@ -50,6 +50,78 @@ class TestChatSettings:
         original = ChatSettings(chat_id=-5, language=Language.ZH, updated_at=_NOW)
         restored = ChatSettings.model_validate_json(original.model_dump_json())
         assert restored == original
+
+    def test_defaults_profile_and_onboarding_step_to_none(self) -> None:
+        settings = ChatSettings(chat_id=1, updated_at=_NOW)
+        assert settings.profile is None
+        assert settings.onboarding_step is None
+
+    def test_json_round_trip_with_full_profile(self) -> None:
+        original = ChatSettings(
+            chat_id=-5,
+            language=Language.ZH,
+            profile=TaskProfile(laundry_target_per_week=3, timezone="Asia/Hong_Kong"),
+            onboarding_step=2,
+            updated_at=_NOW,
+        )
+        restored = ChatSettings.model_validate_json(original.model_dump_json())
+        assert restored == original
+
+    def test_old_json_without_profile_field_still_loads(self) -> None:
+        # Pre-5B persisted JSON never had `profile`/`onboarding_step` keys.
+        old_json = ChatSettings(chat_id=1, language=Language.EN, updated_at=_NOW).model_dump_json(
+            exclude={"profile", "onboarding_step"}
+        )
+        restored = ChatSettings.model_validate_json(old_json)
+        assert restored.profile is None
+        assert restored.onboarding_step is None
+
+
+# ---------------------------------------------------------------------------
+# TaskProfile — Sprint 5B
+# ---------------------------------------------------------------------------
+
+
+class TestTaskProfile:
+    def test_all_defaults_are_valid(self) -> None:
+        profile = TaskProfile()
+        assert profile.laundry_target_per_week == 2
+        assert profile.duration_slots == 4
+        assert profile.outdoor_drying is True
+        assert profile.timezone is None
+
+    def test_is_frozen(self) -> None:
+        profile = TaskProfile()
+        with pytest.raises(ValidationError):
+            profile.laundry_target_per_week = 5  # type: ignore[misc]
+
+    def test_invalid_hhmm_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="HH:MM"):
+            TaskProfile(earliest_start="not-a-time")
+
+    def test_finish_before_start_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="latest_finish must be after earliest_start"):
+            TaskProfile(earliest_start="20:00", latest_finish="08:00")
+
+    def test_target_below_one_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            TaskProfile(laundry_target_per_week=0)
+
+    def test_max_rain_probability_out_of_bounds_rejected(self) -> None:
+        with pytest.raises(ValidationError):
+            TaskProfile(max_rain_probability=101)
+
+    def test_valid_iana_timezone_accepted(self) -> None:
+        profile = TaskProfile(timezone="Europe/London")
+        assert profile.timezone == "Europe/London"
+
+    def test_none_timezone_accepted(self) -> None:
+        profile = TaskProfile(timezone=None)
+        assert profile.timezone is None
+
+    def test_invalid_timezone_rejected(self) -> None:
+        with pytest.raises(ValidationError, match="unknown IANA timezone"):
+            TaskProfile(timezone="Mars/Colony_One")
 
 
 # ---------------------------------------------------------------------------

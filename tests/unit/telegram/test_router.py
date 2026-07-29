@@ -268,6 +268,130 @@ class TestGroupCommandSuffix:
         assert mock_prices.call_args.kwargs["tomorrow"] is True
 
 
+class TestRouteSprint5BCommands:
+    @patch("hrse.telegram.router.handle_setup_start")
+    def test_setup_dispatches_to_handler(self, mock_handler: MagicMock) -> None:
+        client = MagicMock()
+        settings_store = MagicMock()
+        settings_store.get.return_value = None
+        route(update=_update("/setup", chat_id=8), client=client, settings_store=settings_store)
+        mock_handler.assert_called_once_with(
+            chat_id=8, client=client, settings_store=settings_store, lang=Language.EN
+        )
+
+    @patch("hrse.telegram.router.handle_profile")
+    def test_profile_dispatches_to_handler(self, mock_handler: MagicMock) -> None:
+        client = MagicMock()
+        settings_store = MagicMock()
+        settings_store.get.return_value = None
+        route(update=_update("/profile", chat_id=8), client=client, settings_store=settings_store)
+        mock_handler.assert_called_once_with(
+            chat_id=8, client=client, settings_store=settings_store, lang=Language.EN
+        )
+
+    @patch("hrse.telegram.router.handle_reset")
+    def test_reset_dispatches_to_handler(self, mock_handler: MagicMock) -> None:
+        client = MagicMock()
+        settings_store = MagicMock()
+        settings_store.get.return_value = None
+        route(update=_update("/reset", chat_id=8), client=client, settings_store=settings_store)
+        mock_handler.assert_called_once_with(
+            chat_id=8, client=client, settings_store=settings_store, lang=Language.EN
+        )
+
+    def test_setup_without_settings_store_sends_unavailable(self) -> None:
+        client = MagicMock()
+        route(update=_update("/setup", chat_id=8), client=client)
+        _, kwargs = client.send_message.call_args
+        assert "unavailable" in kwargs["text"].lower()
+
+    def test_profile_without_settings_store_sends_unavailable(self) -> None:
+        client = MagicMock()
+        route(update=_update("/profile", chat_id=8), client=client)
+        _, kwargs = client.send_message.call_args
+        assert "unavailable" in kwargs["text"].lower()
+
+    def test_reset_without_settings_store_sends_unavailable(self) -> None:
+        client = MagicMock()
+        route(update=_update("/reset", chat_id=8), client=client)
+        _, kwargs = client.send_message.call_args
+        assert "unavailable" in kwargs["text"].lower()
+
+    @patch("hrse.telegram.router.handle_onboarding_answer")
+    def test_plain_text_during_onboarding_dispatches_to_answer_handler(
+        self, mock_handler: MagicMock
+    ) -> None:
+        from datetime import UTC, datetime
+
+        from hrse.models.chat_settings import ChatSettings
+        from hrse.store.chat_settings_store import InMemoryChatSettingsStore
+
+        settings_store = InMemoryChatSettingsStore()
+        settings_store.save(
+            ChatSettings(chat_id=8, onboarding_step=2, updated_at=datetime(2026, 7, 12, tzinfo=UTC))
+        )
+        client = MagicMock()
+        route(update=_update("2 hours", chat_id=8), client=client, settings_store=settings_store)
+        mock_handler.assert_called_once_with(
+            chat_id=8,
+            text="2 hours",
+            client=client,
+            settings_store=settings_store,
+            lang=Language.EN,
+        )
+
+    @patch("hrse.telegram.router.handle_unknown")
+    @patch("hrse.telegram.router.handle_onboarding_answer")
+    def test_plain_text_without_onboarding_still_dispatches_to_unknown(
+        self, mock_onboarding: MagicMock, mock_unknown: MagicMock
+    ) -> None:
+        client = MagicMock()
+        route(update=_update("hello there"), client=client)
+        mock_onboarding.assert_not_called()
+        mock_unknown.assert_called_once()
+
+    @patch("hrse.telegram.router.handle_prices")
+    def test_prices_prefers_profile_timezone_over_global_default(
+        self, mock_prices: MagicMock
+    ) -> None:
+        from datetime import UTC, datetime
+        from zoneinfo import ZoneInfo
+
+        from hrse.models.chat_settings import ChatSettings, TaskProfile
+        from hrse.store.chat_settings_store import InMemoryChatSettingsStore
+
+        settings_store = InMemoryChatSettingsStore()
+        settings_store.save(
+            ChatSettings(
+                chat_id=8,
+                profile=TaskProfile(timezone="Asia/Hong_Kong"),
+                updated_at=datetime(2026, 7, 12, tzinfo=UTC),
+            )
+        )
+        route(
+            update=_update("/prices", chat_id=8),
+            client=MagicMock(),
+            octopus=MagicMock(),
+            settings_store=settings_store,
+            display_timezone="Europe/London",
+        )
+        assert mock_prices.call_args.kwargs["display_tz"] == ZoneInfo("Asia/Hong_Kong")
+
+    @patch("hrse.telegram.router.handle_prices")
+    def test_prices_falls_back_to_global_timezone_when_no_profile(
+        self, mock_prices: MagicMock
+    ) -> None:
+        from zoneinfo import ZoneInfo
+
+        route(
+            update=_update("/prices", chat_id=8),
+            client=MagicMock(),
+            octopus=MagicMock(),
+            display_timezone="Europe/London",
+        )
+        assert mock_prices.call_args.kwargs["display_tz"] == ZoneInfo("Europe/London")
+
+
 class TestLanguageResolution:
     @patch("hrse.telegram.router.handle_health")
     def test_stored_language_is_used(self, mock_health: MagicMock) -> None:

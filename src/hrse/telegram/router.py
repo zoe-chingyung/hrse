@@ -9,10 +9,13 @@ and dispatches to the correct handler. It understands three update types:
 * ``callback_query`` — inline-keyboard button presses (language selection).
 * ``message`` — slash commands. In groups Telegram appends the bot's
   username (``/summary@MyBot``); the suffix is stripped before matching.
+  Plain text from a chat with an active ``/setup`` conversation is routed
+  to the onboarding answer handler instead of the unknown-command fallback.
 
 Sprint 2A commands: /health
 Sprint 2B commands: /laundry_done, /events, /summary
 Sprint 6  commands: /start, /language, /prices [tomorrow]
+Sprint 5B commands: /setup, /profile, /reset
 """
 
 from __future__ import annotations
@@ -30,7 +33,11 @@ from hrse.telegram.commands import (
     handle_language_callback,
     handle_language_prompt,
     handle_laundry_done,
+    handle_onboarding_answer,
     handle_prices,
+    handle_profile,
+    handle_reset,
+    handle_setup_start,
     handle_summary,
     handle_unknown,
     handle_welcome,
@@ -38,6 +45,7 @@ from hrse.telegram.commands import (
 
 if TYPE_CHECKING:
     from hrse.clients.octopus import OctopusClientProtocol
+    from hrse.models.chat_settings import ChatSettings
     from hrse.models.telegram import TelegramUpdate
     from hrse.store.chat_settings_store import ChatSettingsStore
     from hrse.store.protocol import EventStore
@@ -150,7 +158,8 @@ def _route_message(
     message = update.message
     text = (message.text or "").strip()
     chat_id = message.chat.id
-    lang = _language_for(chat_id, settings_store)
+    chat_settings = _load_chat_settings(chat_id, settings_store)
+    lang = chat_settings.language if chat_settings is not None else Language.EN
 
     command, args = _parse_command(text)
     logger.info("Routing command", extra={"chat_id": chat_id, "command": command})
@@ -164,6 +173,29 @@ def _route_message(
     elif command == "/language":
         handle_language_prompt(chat_id=chat_id, client=client)
 
+    elif command == "/setup":
+        if settings_store is None:
+            logger.error("No settings store available for /setup")
+            _service_unavailable(chat_id, client, lang)
+        else:
+            handle_setup_start(
+                chat_id=chat_id, client=client, settings_store=settings_store, lang=lang
+            )
+
+    elif command == "/profile":
+        if settings_store is None:
+            logger.error("No settings store available for /profile")
+            _service_unavailable(chat_id, client, lang)
+        else:
+            handle_profile(chat_id=chat_id, client=client, settings_store=settings_store, lang=lang)
+
+    elif command == "/reset":
+        if settings_store is None:
+            logger.error("No settings store available for /reset")
+            _service_unavailable(chat_id, client, lang)
+        else:
+            handle_reset(chat_id=chat_id, client=client, settings_store=settings_store, lang=lang)
+
     elif command in ("/prices", "/prices_tomorrow"):
         if octopus is None:
             logger.error("No Octopus client available for /prices")
@@ -174,7 +206,7 @@ def _route_message(
                 client=client,
                 octopus=octopus,
                 lang=lang,
-                display_tz=ZoneInfo(display_timezone),
+                display_tz=ZoneInfo(_effective_timezone(chat_settings, display_timezone)),
                 window_slots=window_slots,
                 tomorrow=command == "/prices_tomorrow"
                 or (bool(args) and args[0].lower() == "tomorrow"),
@@ -201,6 +233,15 @@ def _route_message(
         else:
             handle_summary(chat_id=chat_id, client=client, store=store, lang=lang)
 
+    elif (
+        chat_settings is not None
+        and chat_settings.onboarding_step is not None
+        and settings_store is not None
+    ):
+        handle_onboarding_answer(
+            chat_id=chat_id, text=text, client=client, settings_store=settings_store, lang=lang
+        )
+
     else:
         handle_unknown(chat_id=chat_id, text=text, client=client, lang=lang)
 
@@ -226,20 +267,36 @@ def _parse_command(text: str) -> tuple[str, list[str]]:
     return command, parts[1:]
 
 
-def _language_for(chat_id: int, settings_store: ChatSettingsStore | None) -> Language:
-    """Resolve the display language for ``chat_id``, defaulting to English.
+def _load_chat_settings(
+    chat_id: int, settings_store: ChatSettingsStore | None
+) -> ChatSettings | None:
+    """Fetch this chat's settings, tolerating a missing store or lookup failure.
 
     A settings-store failure must never take a command down, so lookup
-    errors are logged and the default language is used.
+    errors are logged and ``None`` is returned (callers fall back to English
+    / no profile / the global timezone).
     """
     if settings_store is None:
-        return Language.EN
+        return None
     try:
-        settings = settings_store.get(chat_id)
+        return settings_store.get(chat_id)
     except Exception:
-        logger.exception("Failed to load chat settings; defaulting to English")
-        return Language.EN
-    return settings.language if settings is not None else Language.EN
+        logger.exception("Failed to load chat settings; using defaults")
+        return None
+
+
+def _effective_timezone(chat_settings: ChatSettings | None, default: str) -> str:
+    """Return the chat's profile timezone if set, else the global ``default``.
+
+    Mirrors how ``language`` already prefers the per-chat value (Sprint 5B).
+    """
+    if (
+        chat_settings is not None
+        and chat_settings.profile is not None
+        and chat_settings.profile.timezone
+    ):
+        return chat_settings.profile.timezone
+    return default
 
 
 def _service_unavailable(chat_id: int, client: TelegramClientProtocol, lang: Language) -> None:

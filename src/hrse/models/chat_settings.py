@@ -1,18 +1,22 @@
 """Domain models for per-chat settings.
 
 Sprint 6 — Group onboarding & language.
+Sprint 5B — Per-chat task profile & onboarding state machine.
 
-Each Telegram chat (private or group) can carry its own settings. The first
-setting is the display language, chosen via the onboarding inline keyboard.
-Future sprints will extend this model with per-chat task configuration.
+Each Telegram chat (private or group) can carry its own settings: display
+language, an optional per-chat laundry ``TaskProfile``, and the transient
+step counter for an in-progress ``/setup`` conversation.
 """
 
 from __future__ import annotations
 
 from datetime import datetime  # noqa: TCH003 — used as Pydantic field type at runtime
 from enum import StrEnum
+from zoneinfo import available_timezones
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+
+from hrse.utils.datetime_utils import parse_hhmm
 
 
 class Language(StrEnum):
@@ -26,17 +30,93 @@ class Language(StrEnum):
     ZH = "zh"
 
 
+class TaskProfile(BaseModel):
+    """Per-chat laundry task constraints, set via the ``/setup`` conversation.
+
+    Mirrors ``LaundryTaskConfig`` field-for-field (see
+    ``LaundryTaskConfig.from_profile_or_settings``) plus two chat-specific
+    extras collected during onboarding:
+
+    * ``outdoor_drying`` — reserved for a future weather-gate refinement;
+      collected now so the onboarding flow doesn't need a second pass later.
+    * ``timezone`` — NOTE: not part of the engine's constraint set. The spec
+      for this phase asks onboarding to collect a per-chat IANA timezone and
+      "store it on the profile", so it lives here rather than on
+      ``ChatSettings`` directly; it is consumed by the display layer
+      (``handle_prices`` / ``NotificationService``) in preference to the
+      global ``HRSE_TIMEZONE``, the same way ``display_tz`` already flows.
+    """
+
+    model_config = ConfigDict(frozen=True)
+
+    laundry_target_per_week: int = Field(
+        default=2, ge=1, description="Desired laundry runs per week"
+    )
+    duration_slots: int = Field(
+        default=4,
+        ge=1,
+        description="Length of one run as a count of consecutive 30-min slots (4 = 2 hours)",
+    )
+    earliest_start: str = Field(default="08:00", description="Earliest start time, HH:MM")
+    latest_finish: str = Field(default="22:00", description="Latest finish time, HH:MM")
+    wash_budget_pence: float = Field(
+        default=40.0, gt=0, description="Max spend per wash cycle in pence"
+    )
+    machine_kwh: float = Field(default=1.5, gt=0, description="Energy per wash cycle in kWh")
+    min_uv: float = Field(default=3.0, ge=0, description="Lower UV threshold")
+    max_rain_probability: int = Field(
+        default=40, ge=0, le=100, description="Upper rain probability threshold (percent)"
+    )
+    outdoor_drying: bool = Field(default=True, description="Whether laundry dries outdoors")
+    timezone: str | None = Field(
+        default=None, description="IANA timezone for this chat's display, or None to use global"
+    )
+
+    @field_validator("earliest_start", "latest_finish")
+    @classmethod
+    def _validate_hhmm(cls, value: str) -> str:
+        """Ensure time fields are valid HH:MM; stored as the original string."""
+        parse_hhmm(value)  # raises if invalid
+        return value
+
+    @field_validator("timezone")
+    @classmethod
+    def _validate_timezone(cls, value: str | None) -> str | None:
+        """Ensure a supplied timezone is a real IANA zone name."""
+        if value is not None and value not in available_timezones():
+            raise ValueError(f"unknown IANA timezone, got {value!r}")
+        return value
+
+    @model_validator(mode="after")
+    def _finish_after_start(self) -> TaskProfile:
+        """Ensure the window is non-empty: latest_finish must be after earliest_start."""
+        if parse_hhmm(self.latest_finish) <= parse_hhmm(self.earliest_start):
+            raise ValueError("latest_finish must be after earliest_start")
+        return self
+
+
 class ChatSettings(BaseModel):
     """Settings for a single Telegram chat.
 
     Attributes:
-        chat_id:    Telegram chat identifier. Negative for groups.
-        language:   Display language for bot replies in this chat.
-        updated_at: UTC timestamp of the last settings change.
+        chat_id:         Telegram chat identifier. Negative for groups.
+        language:        Display language for bot replies in this chat.
+        profile:         Per-chat laundry constraints, or None to use the
+                         global ``Settings`` defaults from Sprint 5A.
+        onboarding_step: Index of the current ``/setup`` question this chat
+                         is answering, or None when no onboarding is active.
+                         Transient — cleared once ``/setup`` completes.
+        updated_at:      UTC timestamp of the last settings change.
     """
 
     model_config = ConfigDict(frozen=True)
 
     chat_id: int = Field(..., description="Telegram chat identifier (negative for groups)")
     language: Language = Field(default=Language.EN, description="Display language")
+    profile: TaskProfile | None = Field(
+        default=None, description="Per-chat laundry constraints, or None for global defaults"
+    )
+    onboarding_step: int | None = Field(
+        default=None, description="Current /setup question index, or None if not onboarding"
+    )
     updated_at: datetime = Field(..., description="UTC timestamp of last update")

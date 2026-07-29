@@ -15,6 +15,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from hrse.handlers.schedule_handler import handler
+from hrse.models.chat_settings import ChatSettings, TaskProfile
 from hrse.models.pricing import PricePoint
 from hrse.models.weather import DailyForecast
 from hrse.telegram.client import TelegramClientProtocol
@@ -54,6 +55,19 @@ class _StubStore:
         return []
 
 
+class _StubSettingsStore:
+    """Returns no chat settings for any chat — global config defaults apply."""
+
+    def __init__(self, settings: dict[int, ChatSettings] | None = None) -> None:
+        self._settings = settings or {}
+
+    def get(self, chat_id: int) -> ChatSettings | None:
+        return self._settings.get(chat_id)
+
+    def save(self, settings: ChatSettings) -> None:
+        self._settings[settings.chat_id] = settings
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -90,6 +104,7 @@ def _invoke(
     detail_type: str = "DailyPlanning",
     prices: list[PricePoint] | None = None,
     forecast: DailyForecast | None = None,
+    settings_store: _StubSettingsStore | None = None,
 ) -> tuple[dict[str, Any], MagicMock]:
     """Invoke the handler with stubs; return (response, mock_telegram)."""
     tomorrow = (datetime.now(tz=UTC) + timedelta(days=1)).date()
@@ -107,6 +122,7 @@ def _invoke(
         _octopus=_StubOctopus(_prices),
         _weather=_StubWeather(_forecast),
         _store=_StubStore(),
+        _settings_store=settings_store if settings_store is not None else _StubSettingsStore(),
         _telegram=mock_telegram,
         _chat_id=123456789,
     )
@@ -227,3 +243,59 @@ class TestEnvDrivenConfig:
         monkeypatch.setenv("HRSE_MAX_RAIN_PROBABILITY", "10")
         response, _ = _invoke("DailyPlanning")
         assert json.loads(response["body"])["recommended"] is False
+
+
+# ---------------------------------------------------------------------------
+# Sprint 5B — per-chat profile precedence in the notification loop
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit()
+class TestPerChatProfile:
+    def test_chat_with_no_profile_uses_global_config(self) -> None:
+        # No settings stored for chat 123456789 → falls back to global
+        # Settings defaults, same as pre-5B behaviour.
+        response, mock_telegram = _invoke("DailyPlanning")
+        assert json.loads(response["body"])["recommended"] is True
+        _, kwargs = mock_telegram.send_message.call_args
+        assert "Tomorrow" in kwargs["text"]
+
+    def test_chat_profile_wash_budget_overrides_global(self) -> None:
+        # Prices are 7.0p/kWh; default machine_kwh 1.5 → 10.5p total. A
+        # profile budget of 1p must decline for this chat even though the
+        # global default budget (40p) would recommend it.
+        store = _StubSettingsStore(
+            {
+                123456789: ChatSettings(
+                    chat_id=123456789,
+                    profile=TaskProfile(wash_budget_pence=1.0),
+                    updated_at=datetime.now(tz=UTC),
+                )
+            }
+        )
+        _, mock_telegram = _invoke("DailyPlanning", settings_store=store)
+        _, kwargs = mock_telegram.send_message.call_args
+        assert "not recommended" in kwargs["text"].lower()
+
+    def test_chat_profile_timezone_overrides_global_display(self) -> None:
+        # Global display_timezone defaults to Europe/London; a chat profile
+        # with an Asia/Hong_Kong timezone should render its window in HKT.
+        store = _StubSettingsStore(
+            {
+                123456789: ChatSettings(
+                    chat_id=123456789,
+                    profile=TaskProfile(timezone="Asia/Hong_Kong"),
+                    updated_at=datetime.now(tz=UTC),
+                )
+            }
+        )
+        _, mock_telegram = _invoke("DailyPlanning", settings_store=store)
+        _, kwargs = mock_telegram.send_message.call_args
+        assert "HKT" in kwargs["text"]
+
+    def test_settings_store_failure_falls_back_to_global_config(self) -> None:
+        broken = MagicMock()
+        broken.get.side_effect = RuntimeError("s3 down")
+        response, mock_telegram = _invoke("DailyPlanning", settings_store=broken)
+        assert json.loads(response["body"])["recommended"] is True
+        mock_telegram.send_message.assert_called_once()

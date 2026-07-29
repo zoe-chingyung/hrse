@@ -11,7 +11,7 @@ import boto3
 import pytest
 from moto import mock_aws
 
-from hrse.models.chat_settings import ChatSettings, Language
+from hrse.models.chat_settings import ChatSettings, Language, TaskProfile
 from hrse.store.chat_settings_store import (
     InMemoryChatSettingsStore,
     S3ChatSettingsStore,
@@ -85,6 +85,23 @@ class TestS3ChatSettingsStore:
         client = boto3.client("s3", region_name=_REGION)
         keys = [o["Key"] for o in client.list_objects_v2(Bucket=_BUCKET)["Contents"]]
         assert keys == ["settings/-42.json"]
+
+    def test_round_trip_with_full_profile(self, store: S3ChatSettingsStore) -> None:
+        original = ChatSettings(
+            chat_id=-7,
+            language=Language.ZH,
+            profile=TaskProfile(
+                laundry_target_per_week=3,
+                earliest_start="07:00",
+                latest_finish="21:00",
+                outdoor_drying=False,
+                timezone="Asia/Hong_Kong",
+            ),
+            onboarding_step=None,
+            updated_at=_NOW,
+        )
+        store.save(original)
+        assert store.get(-7) == original
 
 
 # ---------------------------------------------------------------------------

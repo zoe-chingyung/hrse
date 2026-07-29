@@ -10,37 +10,17 @@ never re-parses raw strings.
 
 from __future__ import annotations
 
-from datetime import time
 from typing import TYPE_CHECKING
 
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
+from hrse.utils.datetime_utils import parse_hhmm
+
 if TYPE_CHECKING:
+    from datetime import time
+
     from hrse.config import Settings
-
-
-def _parse_hhmm(value: str) -> time:
-    """Parse a strict ``HH:MM`` 24-hour string into a ``time``.
-
-    Args:
-        value: A string like "08:00" or "22:30".
-
-    Returns:
-        The corresponding ``datetime.time``.
-
-    Raises:
-        ValueError: If the string is not valid ``HH:MM``.
-    """
-    parts = value.split(":")
-    if len(parts) != 2:
-        raise ValueError(f"time must be in HH:MM format, got {value!r}")
-    try:
-        hour, minute = int(parts[0]), int(parts[1])
-    except ValueError as exc:
-        raise ValueError(f"time must be in HH:MM format, got {value!r}") from exc
-    if not (0 <= hour <= 23 and 0 <= minute <= 59):
-        raise ValueError(f"time out of range, got {value!r}")
-    return time(hour=hour, minute=minute)
+    from hrse.models.chat_settings import TaskProfile
 
 
 class LaundryTaskConfig(BaseModel):
@@ -93,7 +73,7 @@ class LaundryTaskConfig(BaseModel):
     @classmethod
     def _validate_hhmm(cls, value: str) -> str:
         """Ensure time fields are valid HH:MM; stored as the original string."""
-        _parse_hhmm(value)  # raises if invalid
+        parse_hhmm(value)  # raises if invalid
         return value
 
     @model_validator(mode="after")
@@ -132,6 +112,39 @@ class LaundryTaskConfig(BaseModel):
             max_rain_probability=settings.max_rain_probability,
         )
 
+    @classmethod
+    def from_profile_or_settings(
+        cls, profile: TaskProfile | None, settings: Settings
+    ) -> LaundryTaskConfig:
+        """Build a ``LaundryTaskConfig``, preferring a per-chat profile when set.
+
+        This is the precedence chain introduced in Sprint 5B: a chat that has
+        completed ``/setup`` gets its own thresholds; every other chat keeps
+        using the global ``Settings`` defaults from Sprint 5A. It also unifies
+        the ``duration_slots`` duplication between the price-chart env var and
+        the per-chat profile — the profile wins whenever it is set.
+
+        Args:
+            profile:  The chat's ``TaskProfile``, or ``None`` if unconfigured.
+            settings: The application's global ``Settings`` instance, used as
+                      the fallback when no profile is set.
+
+        Returns:
+            A validated ``LaundryTaskConfig``.
+        """
+        if profile is None:
+            return cls.from_settings(settings)
+        return cls(
+            target_runs_per_week=profile.laundry_target_per_week,
+            duration_slots=profile.duration_slots,
+            earliest_start=profile.earliest_start,
+            latest_finish=profile.latest_finish,
+            wash_budget_pence=profile.wash_budget_pence,
+            machine_kwh=profile.machine_kwh,
+            min_uv=profile.min_uv,
+            max_rain_probability=profile.max_rain_probability,
+        )
+
     # ------------------------------------------------------------------
     # Convenience accessors — parsed once, no raw-string handling downstream
     # ------------------------------------------------------------------
@@ -139,9 +152,9 @@ class LaundryTaskConfig(BaseModel):
     @property
     def earliest_start_time(self) -> time:
         """``earliest_start`` parsed to a ``datetime.time``."""
-        return _parse_hhmm(self.earliest_start)
+        return parse_hhmm(self.earliest_start)
 
     @property
     def latest_finish_time(self) -> time:
         """``latest_finish`` parsed to a ``datetime.time``."""
-        return _parse_hhmm(self.latest_finish)
+        return parse_hhmm(self.latest_finish)
