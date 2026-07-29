@@ -42,11 +42,13 @@ from __future__ import annotations
 import json
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any
+from zoneinfo import ZoneInfo
 
 from aws_lambda_powertools import Logger, Tracer
 
 from hrse.clients.octopus import OctopusClientProtocol, get_octopus_client
 from hrse.clients.weather import WeatherClientProtocol, get_weather_client
+from hrse.config import get_settings
 from hrse.models.task_config import LaundryTaskConfig
 from hrse.services.decision_engine import DecisionService
 from hrse.services.notification import NotificationKind, NotificationService
@@ -175,7 +177,8 @@ def handler(
     )
 
     # Format and send the Telegram notification to all configured chats.
-    message = NotificationService().format(recommendation, kind)
+    display_tz = ZoneInfo(get_settings().display_timezone)
+    message = NotificationService(display_tz=display_tz).format(recommendation, kind)
     for chat_id in chat_ids:
         telegram.send_message(chat_id=chat_id, text=message)
         logger.info("Notification sent", extra={"chat_id": chat_id})

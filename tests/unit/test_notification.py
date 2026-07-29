@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from datetime import UTC, datetime
 from unittest.mock import MagicMock, patch
+from zoneinfo import ZoneInfo
 
 import pytest
 
@@ -19,9 +20,15 @@ from hrse.telegram.token_provider import (
     get_chat_id_provider,
 )
 
+_LONDON = ZoneInfo("Europe/London")
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
+
+def _service(display_tz: ZoneInfo = _LONDON) -> NotificationService:
+    return NotificationService(display_tz=display_tz)
 
 
 def _provider(secret: dict[str, str]) -> SecretsManagerChatIdProvider:
@@ -141,35 +148,33 @@ class TestSecretsManagerChatIdProvider:
 @pytest.mark.unit()
 class TestNotificationServicePlanning:
     def test_recommended_contains_window(self) -> None:
-        msg = NotificationService().format(_rec_yes(), NotificationKind.PLANNING)
+        msg = _service().format(_rec_yes(), NotificationKind.PLANNING)
         assert "14:00" in msg  # 13:00 UTC = 14:00 BST
         assert "16:00" in msg  # 15:00 UTC = 16:00 BST
         assert "BST" in msg
 
     def test_recommended_contains_price(self) -> None:
-        msg = NotificationService().format(_rec_yes(), NotificationKind.PLANNING)
+        msg = _service().format(_rec_yes(), NotificationKind.PLANNING)
         assert "7.5" in msg
 
     def test_recommended_contains_reasons(self) -> None:
-        msg = NotificationService().format(_rec_yes(), NotificationKind.PLANNING)
+        msg = _service().format(_rec_yes(), NotificationKind.PLANNING)
         assert "laundry target not met" in msg
 
     def test_recommended_has_check_marks(self) -> None:
-        msg = NotificationService().format(_rec_yes(), NotificationKind.PLANNING)
+        msg = _service().format(_rec_yes(), NotificationKind.PLANNING)
         assert "✓" in msg
 
     def test_not_recommended_says_not_recommended(self) -> None:
-        msg = NotificationService().format(_rec_no(), NotificationKind.PLANNING)
+        msg = _service().format(_rec_no(), NotificationKind.PLANNING)
         assert "not recommended" in msg.lower()
 
     def test_not_recommended_contains_reason(self) -> None:
-        msg = NotificationService().format(
-            _rec_no("rain probability too high"), NotificationKind.PLANNING
-        )
+        msg = _service().format(_rec_no("rain probability too high"), NotificationKind.PLANNING)
         assert "rain probability too high" in msg
 
     def test_planning_header_present(self) -> None:
-        msg = NotificationService().format(_rec_yes(), NotificationKind.PLANNING)
+        msg = _service().format(_rec_yes(), NotificationKind.PLANNING)
         assert "Tomorrow" in msg
 
 
@@ -181,19 +186,84 @@ class TestNotificationServicePlanning:
 @pytest.mark.unit()
 class TestNotificationServiceReminder:
     def test_recommended_contains_window(self) -> None:
-        msg = NotificationService().format(_rec_yes(), NotificationKind.REMINDER)
+        msg = _service().format(_rec_yes(), NotificationKind.REMINDER)
         assert "14:00" in msg  # 13:00 UTC = 14:00 BST
         assert "16:00" in msg  # 15:00 UTC = 16:00 BST
         assert "BST" in msg
 
     def test_recommended_prompts_laundry_done(self) -> None:
-        msg = NotificationService().format(_rec_yes(), NotificationKind.REMINDER)
+        msg = _service().format(_rec_yes(), NotificationKind.REMINDER)
         assert "/laundry_done" in msg
 
     def test_not_recommended_says_no_laundry(self) -> None:
-        msg = NotificationService().format(_rec_no(), NotificationKind.REMINDER)
+        msg = _service().format(_rec_no(), NotificationKind.REMINDER)
         assert "No laundry" in msg
 
     def test_reminder_header_present(self) -> None:
-        msg = NotificationService().format(_rec_yes(), NotificationKind.REMINDER)
+        msg = _service().format(_rec_yes(), NotificationKind.REMINDER)
         assert "Reminder" in msg
+
+
+# ---------------------------------------------------------------------------
+# NotificationService — DST-correct timezone label (Phase 0 regression)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit()
+class TestNotificationServiceTimezoneLabel:
+    def test_summer_date_renders_bst(self) -> None:
+        rec = Recommendation(
+            task="laundry",
+            recommended=True,
+            window=RecommendationWindow(
+                start=datetime(2026, 6, 24, 13, 0, tzinfo=UTC),
+                end=datetime(2026, 6, 24, 15, 0, tzinfo=UTC),
+            ),
+            expected_price_pence=7.5,
+            reasons=["laundry target not met"],
+        )
+        msg = _service().format(rec, NotificationKind.PLANNING)
+        assert "BST" in msg
+        assert "14:00" in msg  # 13:00 UTC = 14:00 BST
+
+    def test_winter_date_renders_gmt(self) -> None:
+        rec = Recommendation(
+            task="laundry",
+            recommended=True,
+            window=RecommendationWindow(
+                start=datetime(2026, 12, 24, 13, 0, tzinfo=UTC),
+                end=datetime(2026, 12, 24, 15, 0, tzinfo=UTC),
+            ),
+            expected_price_pence=7.5,
+            reasons=["laundry target not met"],
+        )
+        msg = _service().format(rec, NotificationKind.PLANNING)
+        assert "GMT" in msg
+        assert "BST" not in msg
+        assert "13:00" in msg  # GMT == UTC, no offset
+
+    def test_same_service_instance_handles_both_sides_of_dst(self) -> None:
+        # A single NotificationService (one Lambda container) must label
+        # each notification correctly regardless of which side of the
+        # October/March DST boundary the window falls on.
+        svc = _service()
+        summer = Recommendation(
+            task="laundry",
+            recommended=True,
+            window=RecommendationWindow(
+                start=datetime(2026, 7, 1, 8, 0, tzinfo=UTC),
+                end=datetime(2026, 7, 1, 10, 0, tzinfo=UTC),
+            ),
+            reasons=[],
+        )
+        winter = Recommendation(
+            task="laundry",
+            recommended=True,
+            window=RecommendationWindow(
+                start=datetime(2026, 1, 1, 8, 0, tzinfo=UTC),
+                end=datetime(2026, 1, 1, 10, 0, tzinfo=UTC),
+            ),
+            reasons=[],
+        )
+        assert "BST" in svc.format(summer, NotificationKind.REMINDER)
+        assert "GMT" in svc.format(winter, NotificationKind.REMINDER)
