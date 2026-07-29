@@ -392,6 +392,68 @@ class TestRouteSprint5BCommands:
         assert mock_prices.call_args.kwargs["display_tz"] == ZoneInfo("Europe/London")
 
 
+class TestRouteSprint5CCommands:
+    @patch("hrse.telegram.router.handle_tasks")
+    def test_tasks_dispatches_to_handler(self, mock_handler: MagicMock) -> None:
+        client = MagicMock()
+        settings_store = MagicMock()
+        settings_store.get.return_value = None
+        route(update=_update("/tasks", chat_id=8), client=client, settings_store=settings_store)
+        mock_handler.assert_called_once_with(
+            chat_id=8, client=client, settings_store=settings_store, lang=Language.EN
+        )
+
+    @patch("hrse.telegram.router.handle_add_task")
+    def test_add_task_dispatches_to_handler_with_args(self, mock_handler: MagicMock) -> None:
+        client = MagicMock()
+        settings_store = MagicMock()
+        settings_store.get.return_value = None
+        route(
+            update=_update("/add_task dishwasher", chat_id=8),
+            client=client,
+            settings_store=settings_store,
+        )
+        mock_handler.assert_called_once_with(
+            chat_id=8,
+            args=["dishwasher"],
+            client=client,
+            settings_store=settings_store,
+            lang=Language.EN,
+        )
+
+    @patch("hrse.telegram.router.handle_remove_task")
+    def test_remove_task_dispatches_to_handler_with_args(self, mock_handler: MagicMock) -> None:
+        client = MagicMock()
+        settings_store = MagicMock()
+        settings_store.get.return_value = None
+        route(
+            update=_update("/remove_task ev", chat_id=8),
+            client=client,
+            settings_store=settings_store,
+        )
+        mock_handler.assert_called_once_with(
+            chat_id=8, args=["ev"], client=client, settings_store=settings_store, lang=Language.EN
+        )
+
+    def test_tasks_without_settings_store_sends_unavailable(self) -> None:
+        client = MagicMock()
+        route(update=_update("/tasks", chat_id=8), client=client)
+        _, kwargs = client.send_message.call_args
+        assert "unavailable" in kwargs["text"].lower()
+
+    def test_add_task_without_settings_store_sends_unavailable(self) -> None:
+        client = MagicMock()
+        route(update=_update("/add_task laundry", chat_id=8), client=client)
+        _, kwargs = client.send_message.call_args
+        assert "unavailable" in kwargs["text"].lower()
+
+    def test_remove_task_without_settings_store_sends_unavailable(self) -> None:
+        client = MagicMock()
+        route(update=_update("/remove_task laundry", chat_id=8), client=client)
+        _, kwargs = client.send_message.call_args
+        assert "unavailable" in kwargs["text"].lower()
+
+
 class TestLanguageResolution:
     @patch("hrse.telegram.router.handle_health")
     def test_stored_language_is_used(self, mock_health: MagicMock) -> None:

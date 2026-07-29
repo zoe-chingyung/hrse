@@ -51,6 +51,14 @@ class MessageKey(StrEnum):
     PROFILE_HEADER = auto()
     PROFILE_NONE = auto()
     RESET_DONE = auto()
+    TASKS_LIST = auto()
+    TASK_USAGE_ADD = auto()
+    TASK_USAGE_REMOVE = auto()
+    TASK_UNKNOWN = auto()
+    TASK_ALREADY_ENABLED = auto()
+    TASK_ADDED = auto()
+    TASK_NOT_ENABLED = auto()
+    TASK_REMOVED = auto()
 
 
 _COMMANDS_EN = (
@@ -63,6 +71,9 @@ _COMMANDS_EN = (
     "/setup — configure your laundry preferences\n"
     "/profile — show your current settings\n"
     "/reset — clear your settings (use global defaults)\n"
+    "/tasks — list your active tasks\n"
+    "/add_task — enable a task (laundry, dishwasher, ev)\n"
+    "/remove_task — disable a task\n"
     "/language — change language\n"
     "/health — service status"
 )
@@ -77,6 +88,9 @@ _COMMANDS_ZH = (
     "/setup — 設定你嘅洗衫偏好\n"
     "/profile — 查看你而家嘅設定\n"
     "/reset — 清除你嘅設定(用返預設值)\n"
+    "/tasks — 查看你已啟用嘅任務\n"
+    "/add_task — 啟用任務(laundry、dishwasher、ev)\n"
+    "/remove_task — 停用任務\n"
     "/language — 更改語言\n"
     "/health — 服務狀態"
 )
@@ -261,6 +275,38 @@ _CATALOGUE: dict[MessageKey, dict[Language, str]] = {
     MessageKey.RESET_DONE: {
         Language.EN: "🔄 Your settings have been cleared. Using global defaults now.",
         Language.ZH: "🔄 你嘅設定已經清除,而家用緊全域預設值。",
+    },
+    MessageKey.TASKS_LIST: {
+        Language.EN: "📋 <b>Your Active Tasks</b>\n{tasks}",
+        Language.ZH: "📋 <b>你已啟用嘅任務</b>\n{tasks}",
+    },
+    MessageKey.TASK_USAGE_ADD: {
+        Language.EN: "Usage: <code>/add_task laundry|dishwasher|ev</code>",
+        Language.ZH: "用法:<code>/add_task laundry|dishwasher|ev</code>",
+    },
+    MessageKey.TASK_USAGE_REMOVE: {
+        Language.EN: "Usage: <code>/remove_task laundry|dishwasher|ev</code>",
+        Language.ZH: "用法:<code>/remove_task laundry|dishwasher|ev</code>",
+    },
+    MessageKey.TASK_UNKNOWN: {
+        Language.EN: "⚠️ Unknown task <code>{task}</code>. Valid: {valid}",
+        Language.ZH: "⚠️ 未知任務 <code>{task}</code>。可用:{valid}",
+    },
+    MessageKey.TASK_ALREADY_ENABLED: {
+        Language.EN: "{task} is already enabled.",
+        Language.ZH: "{task} 已經啟用咗。",
+    },
+    MessageKey.TASK_ADDED: {
+        Language.EN: "✅ {task} enabled.",
+        Language.ZH: "✅ {task} 已啟用。",
+    },
+    MessageKey.TASK_NOT_ENABLED: {
+        Language.EN: "{task} isn't enabled.",
+        Language.ZH: "{task} 未啟用。",
+    },
+    MessageKey.TASK_REMOVED: {
+        Language.EN: "❌ {task} disabled.",
+        Language.ZH: "❌ {task} 已停用。",
     },
 }
 

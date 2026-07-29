@@ -16,6 +16,7 @@ Sprint 2A commands: /health
 Sprint 2B commands: /laundry_done, /events, /summary
 Sprint 6  commands: /start, /language, /prices [tomorrow]
 Sprint 5B commands: /setup, /profile, /reset
+Sprint 5C commands: /tasks, /add_task, /remove_task
 """
 
 from __future__ import annotations
@@ -28,6 +29,7 @@ from aws_lambda_powertools import Logger
 from hrse.models.chat_settings import Language
 from hrse.telegram.commands import (
     LANGUAGE_CALLBACK_PREFIX,
+    handle_add_task,
     handle_events,
     handle_health,
     handle_language_callback,
@@ -36,9 +38,11 @@ from hrse.telegram.commands import (
     handle_onboarding_answer,
     handle_prices,
     handle_profile,
+    handle_remove_task,
     handle_reset,
     handle_setup_start,
     handle_summary,
+    handle_tasks,
     handle_unknown,
     handle_welcome,
 )
@@ -195,6 +199,31 @@ def _route_message(
             _service_unavailable(chat_id, client, lang)
         else:
             handle_reset(chat_id=chat_id, client=client, settings_store=settings_store, lang=lang)
+
+    elif command == "/tasks":
+        if settings_store is None:
+            logger.error("No settings store available for /tasks")
+            _service_unavailable(chat_id, client, lang)
+        else:
+            handle_tasks(chat_id=chat_id, client=client, settings_store=settings_store, lang=lang)
+
+    elif command == "/add_task":
+        if settings_store is None:
+            logger.error("No settings store available for /add_task")
+            _service_unavailable(chat_id, client, lang)
+        else:
+            handle_add_task(
+                chat_id=chat_id, args=args, client=client, settings_store=settings_store, lang=lang
+            )
+
+    elif command == "/remove_task":
+        if settings_store is None:
+            logger.error("No settings store available for /remove_task")
+            _service_unavailable(chat_id, client, lang)
+        else:
+            handle_remove_task(
+                chat_id=chat_id, args=args, client=client, settings_store=settings_store, lang=lang
+            )
 
     elif command in ("/prices", "/prices_tomorrow"):
         if octopus is None:

@@ -8,6 +8,7 @@ Sprint 2A: /health
 Sprint 2B: /laundry_done, /events, /summary
 Sprint 6 : /start welcome flow, /language, /prices, language callback
 Sprint 5B: /setup onboarding conversation, /profile, /reset
+Sprint 5C: /tasks, /add_task, /remove_task
 """
 
 from __future__ import annotations
@@ -24,6 +25,7 @@ from hrse.clients.octopus import OctopusApiError
 from hrse.i18n import MessageKey, bilingual_welcome, t
 from hrse.models.chat_settings import ChatSettings, Language, TaskProfile
 from hrse.models.events import LAUNDRY_COMPLETED, Event
+from hrse.models.task_config import TASK_REGISTRY
 from hrse.models.telegram import InlineKeyboardButton, InlineKeyboardMarkup
 from hrse.services.price_chart import render_price_chart
 from hrse.utils.datetime_utils import parse_hhmm, utcnow
@@ -501,6 +503,145 @@ def _send_setup_question(
     client.send_message(
         chat_id=chat_id,
         text=t(question_key, lang, step=step + 1, total=len(_SETUP_STEPS)),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Sprint 5C — /tasks, /add_task, /remove_task
+# ---------------------------------------------------------------------------
+
+# Display label per TASK_REGISTRY key. Distinct from NotificationService's
+# task-name labels (keyed by Recommendation.task, e.g. "ev_charging") since
+# these commands operate on registry keys (e.g. "ev") instead.
+_TASK_DISPLAY: dict[str, str] = {
+    "laundry": "🧺 Laundry",
+    "dishwasher": "🍽 Dishwasher",
+    "ev": "🔌 EV Charging",
+}
+
+
+def _task_display(task_name: str) -> str:
+    """Return a display label for a TASK_REGISTRY key."""
+    return _TASK_DISPLAY.get(task_name, task_name)
+
+
+def handle_tasks(
+    chat_id: int,
+    client: TelegramClientProtocol,
+    settings_store: ChatSettingsStore,
+    lang: Language,
+) -> None:
+    """Reply with this chat's currently enabled tasks.
+
+    Args:
+        chat_id:        Telegram chat to reply to.
+        client:         Client used to send the reply.
+        settings_store: Store used to load the chat's settings.
+        lang:           Display language.
+    """
+    settings = settings_store.get(chat_id)
+    enabled = settings.enabled_tasks if settings is not None else ["laundry"]
+    lines = "\n".join(f"  • {_task_display(name)}" for name in enabled)
+    client.send_message(chat_id=chat_id, text=t(MessageKey.TASKS_LIST, lang, tasks=lines))
+
+
+def handle_add_task(
+    chat_id: int,
+    args: list[str],
+    client: TelegramClientProtocol,
+    settings_store: ChatSettingsStore,
+    lang: Language,
+) -> None:
+    """Enable a task type (a ``TASK_REGISTRY`` key) for this chat.
+
+    Args:
+        chat_id:        Telegram chat to reply to.
+        args:           Command arguments; ``args[0]`` is the task key.
+        client:         Client used to send the reply.
+        settings_store: Store used to load/persist the chat's settings.
+        lang:           Display language.
+    """
+    if not args:
+        client.send_message(chat_id=chat_id, text=t(MessageKey.TASK_USAGE_ADD, lang))
+        return
+
+    task_name = args[0].lower()
+    if task_name not in TASK_REGISTRY:
+        client.send_message(
+            chat_id=chat_id,
+            text=t(
+                MessageKey.TASK_UNKNOWN,
+                lang,
+                task=task_name,
+                valid=", ".join(sorted(TASK_REGISTRY)),
+            ),
+        )
+        return
+
+    settings = settings_store.get(chat_id)
+    enabled = list(settings.enabled_tasks) if settings is not None else ["laundry"]
+    if task_name in enabled:
+        client.send_message(
+            chat_id=chat_id,
+            text=t(MessageKey.TASK_ALREADY_ENABLED, lang, task=_task_display(task_name)),
+        )
+        return
+
+    enabled.append(task_name)
+    settings_store.save(_with_enabled_tasks(chat_id, settings, lang, enabled))
+    client.send_message(
+        chat_id=chat_id, text=t(MessageKey.TASK_ADDED, lang, task=_task_display(task_name))
+    )
+
+
+def handle_remove_task(
+    chat_id: int,
+    args: list[str],
+    client: TelegramClientProtocol,
+    settings_store: ChatSettingsStore,
+    lang: Language,
+) -> None:
+    """Disable a task type (a ``TASK_REGISTRY`` key) for this chat.
+
+    Args:
+        chat_id:        Telegram chat to reply to.
+        args:           Command arguments; ``args[0]`` is the task key.
+        client:         Client used to send the reply.
+        settings_store: Store used to load/persist the chat's settings.
+        lang:           Display language.
+    """
+    if not args:
+        client.send_message(chat_id=chat_id, text=t(MessageKey.TASK_USAGE_REMOVE, lang))
+        return
+
+    task_name = args[0].lower()
+    settings = settings_store.get(chat_id)
+    enabled = list(settings.enabled_tasks) if settings is not None else ["laundry"]
+    if task_name not in enabled:
+        client.send_message(
+            chat_id=chat_id,
+            text=t(MessageKey.TASK_NOT_ENABLED, lang, task=_task_display(task_name)),
+        )
+        return
+
+    enabled.remove(task_name)
+    settings_store.save(_with_enabled_tasks(chat_id, settings, lang, enabled))
+    client.send_message(
+        chat_id=chat_id, text=t(MessageKey.TASK_REMOVED, lang, task=_task_display(task_name))
+    )
+
+
+def _with_enabled_tasks(
+    chat_id: int, settings: ChatSettings | None, lang: Language, enabled_tasks: list[str]
+) -> ChatSettings:
+    """Build the next ``ChatSettings`` with ``enabled_tasks`` updated, else unchanged."""
+    return ChatSettings(
+        chat_id=chat_id,
+        language=settings.language if settings is not None else lang,
+        profile=settings.profile if settings is not None else None,
+        onboarding_step=settings.onboarding_step if settings is not None else None,
+        enabled_tasks=enabled_tasks,
+        updated_at=utcnow(),
     )
 
 
