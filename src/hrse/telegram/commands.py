@@ -235,6 +235,7 @@ def handle_prices(
     octopus: OctopusClientProtocol,
     lang: Language,
     display_tz: ZoneInfo,
+    window_slots: int = 4,
     tomorrow: bool = False,
 ) -> None:
     """Reply with an Agile price chart for today or tomorrow.
@@ -247,8 +248,9 @@ def handle_prices(
         client:     Client used to send the reply.
         octopus:    Price client.
         lang:       Display language.
-        display_tz: Timezone defining day boundaries and slot labels.
-        tomorrow:   Fetch tomorrow's prices instead of today's.
+        display_tz:   Timezone defining day boundaries and slot labels.
+        window_slots: Length of the cheapest window to highlight, in slots.
+        tomorrow:     Fetch tomorrow's prices instead of today's.
     """
     target_day = utcnow().astimezone(display_tz).date() + timedelta(days=1 if tomorrow else 0)
     start_local = datetime.combine(target_day, time.min, tzinfo=display_tz)
@@ -271,7 +273,9 @@ def handle_prices(
 
     header_key = MessageKey.PRICES_HEADER_TOMORROW if tomorrow else MessageKey.PRICES_HEADER_TODAY
     header = t(header_key, lang, date=target_day.isoformat())
-    chart = render_price_chart(points=points, lang=lang, display_tz=display_tz)
+    chart = render_price_chart(
+        points=points, lang=lang, display_tz=display_tz, window_slots=window_slots
+    )
     client.send_message(chat_id=chat_id, text=f"{header}\n{chart}")
 
 

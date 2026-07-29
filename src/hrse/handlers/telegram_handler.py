@@ -92,6 +92,7 @@ def handler(
             settings_store=settings_store,
             octopus=octopus,
             display_timezone=get_settings().display_timezone,
+            window_slots=get_settings().duration_slots,
         )
     except Exception:
         logger.exception("Unhandled error while processing Telegram update")

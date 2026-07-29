@@ -57,6 +57,7 @@ def route(
     settings_store: ChatSettingsStore | None = None,
     octopus: OctopusClientProtocol | None = None,
     display_timezone: str = "Europe/London",
+    window_slots: int = 4,
 ) -> None:
     """Dispatch ``update`` to the appropriate handler.
 
@@ -68,6 +69,7 @@ def route(
                           absent, replies default to English.
         octopus:          Price client for the /prices command.
         display_timezone: IANA timezone for day boundaries and time display.
+        window_slots:     Length of the cheapest /prices window, in 30-min slots.
     """
     if update.my_chat_member is not None:
         _route_my_chat_member(update, client)
@@ -78,7 +80,9 @@ def route(
         return
 
     if update.message is not None:
-        _route_message(update, client, store, settings_store, octopus, display_timezone)
+        _route_message(
+            update, client, store, settings_store, octopus, display_timezone, window_slots
+        )
         return
 
     logger.warning(
@@ -136,8 +140,12 @@ def _route_message(
     settings_store: ChatSettingsStore | None,
     octopus: OctopusClientProtocol | None,
     display_timezone: str,
+    window_slots: int,
 ) -> None:
-    """Parse and dispatch a slash command message."""
+    """Parse and dispatch a slash command message.
+
+    ``window_slots`` is the cheapest-window length forwarded to /prices.
+    """
     assert update.message is not None  # noqa: S101 — narrowing for mypy
     message = update.message
     text = (message.text or "").strip()
@@ -167,6 +175,7 @@ def _route_message(
                 octopus=octopus,
                 lang=lang,
                 display_tz=ZoneInfo(display_timezone),
+                window_slots=window_slots,
                 tomorrow=command == "/prices_tomorrow"
                 or (bool(args) and args[0].lower() == "tomorrow"),
             )
