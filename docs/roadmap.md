@@ -1,8 +1,8 @@
 # HRSE Roadmap
 
-Version: 3.0
+Version: 3.1
 
-Status: Post-MVP Evolution
+Status: Post-MVP Evolution — Sprints 5A/5B/5C complete (2026-07-29)
 
 ---
 
@@ -233,7 +233,26 @@ Move from recommendation generation to continuous optimisation.
 
 # Delivery Roadmap
 
+## Timezone fix — Notification display timezone
+
+Status: Complete (2026-07-29)
+
+Focus:
+
+* `NotificationService` took a hardcoded BST offset; would render every
+  notification an hour wrong once UK clocks went back in late October.
+
+Outcome:
+
+* `NotificationService(display_tz: ZoneInfo)` — label derived from
+  `tzname()` at the window instant, correct on both sides of the DST
+  boundary. Regression-tested with a winter (GMT) and summer (BST) case.
+
+---
+
 ## Sprint 5A — Open Source Hardening
+
+Status: Complete (2026-07-29)
 
 Focus:
 
@@ -245,11 +264,15 @@ Focus:
 
 Outcome:
 
-Forkable project.
+* Forkable project — `_DEFAULT_CONFIG` deleted; every laundry threshold is
+  now an `HRSE_*` env var (`Settings` → `LaundryTaskConfig.from_settings()`).
+  Docker support and the timezone fix landed alongside this sprint.
 
 ---
 
 ## Sprint 5B — User Onboarding Engine
+
+Status: Complete (2026-07-29)
 
 Focus:
 
@@ -259,11 +282,17 @@ Focus:
 
 Outcome:
 
-Non-technical users can configure HRSE.
+* Non-technical users can configure HRSE via `/setup` — a 6-question
+  Telegram conversation persisted as `ChatSettings.profile` (`TaskProfile`).
+  `LaundryTaskConfig.from_profile_or_settings()` resolves precedence
+  (profile → global `Settings` → field defaults). `/profile` and `/reset`
+  round out the per-chat settings lifecycle.
 
 ---
 
 ## Sprint 5C — Plugin Architecture
+
+Status: Complete (2026-07-29)
 
 Focus:
 
@@ -274,7 +303,22 @@ Focus:
 
 Outcome:
 
-Multi-task scheduling foundation.
+* `FlexibleTaskConfig` — a structural `Protocol` capturing exactly the
+  fields `DecisionService.evaluate()` reads — replaces the direct
+  `LaundryTaskConfig` dependency. `DishwasherConfig` and `EVChargingConfig`
+  satisfy it with no shared base class required by the engine.
+  `TASK_REGISTRY` maps `laundry`/`dishwasher`/`ev` to their config classes;
+  `ChatSettings.enabled_tasks` (default `["laundry"]`) drives which tasks
+  `schedule_handler` evaluates per chat, and `/tasks`, `/add_task`,
+  `/remove_task` manage that list from Telegram.
+  `NotificationService.format_multi()` renders one block per enabled task,
+  falling back to the original single-task `format()` output when only
+  one task is enabled — existing chats see no change.
+* Deliberately deferred (see the tech-debt table in `README.md`): per-task
+  weekly-activity counts (Rule 1 still only tracks `laundry_count`), and
+  onboarding/env-config for `dishwasher`/`ev` (they use `TASK_REGISTRY`
+  defaults only). Sprint 6 (below) was explicitly out of scope for this
+  delivery and was not started.
 
 ---
 
