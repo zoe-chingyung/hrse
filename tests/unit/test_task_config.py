@@ -13,6 +13,7 @@ from hrse.models.task_config import (
     EVChargingConfig,
     FlexibleTaskConfig,
     LaundryTaskConfig,
+    build_task_config,
 )
 
 # ---------------------------------------------------------------------------
@@ -101,7 +102,7 @@ class TestFromProfileOrSettings:
 
     def test_profile_present_wins_over_settings(self) -> None:
         settings = Settings(laundry_target_per_week=3, wash_budget_pence=99.0)
-        profile = TaskProfile(laundry_target_per_week=1, wash_budget_pence=25.0)
+        profile = TaskProfile(target_per_week=1, wash_budget_pence=25.0)
         config = LaundryTaskConfig.from_profile_or_settings(profile, settings)
 
         assert config.target_runs_per_week == 1
@@ -109,7 +110,7 @@ class TestFromProfileOrSettings:
 
     def test_profile_maps_every_shared_field(self) -> None:
         profile = TaskProfile(
-            laundry_target_per_week=5,
+            target_per_week=5,
             duration_slots=2,
             earliest_start="06:00",
             latest_finish="23:00",
@@ -219,3 +220,61 @@ class TestTaskRegistry:
 
     def test_ev_key_maps_to_ev_charging_config(self) -> None:
         assert TASK_REGISTRY["ev"] is EVChargingConfig
+
+
+# ---------------------------------------------------------------------------
+# build_task_config — Sprint 5D
+# ---------------------------------------------------------------------------
+
+
+class TestBuildTaskConfig:
+    def test_laundry_no_profile_uses_settings(self) -> None:
+        settings = Settings(laundry_target_per_week=3)
+        config = build_task_config("laundry", None, settings)
+        assert isinstance(config, LaundryTaskConfig)
+        assert config.target_runs_per_week == 3
+
+    def test_laundry_with_profile_uses_profile(self) -> None:
+        profile = TaskProfile(target_per_week=1)
+        config = build_task_config("laundry", profile, Settings())
+        assert config.target_runs_per_week == 1
+
+    def test_dishwasher_no_profile_uses_registry_defaults(self) -> None:
+        config = build_task_config("dishwasher", None, Settings())
+        assert isinstance(config, DishwasherConfig)
+        assert config.target_runs_per_week == 5  # DishwasherConfig's own default
+
+    def test_dishwasher_with_profile_overrides_non_weather_fields(self) -> None:
+        profile = TaskProfile(target_per_week=9, wash_budget_pence=12.0, machine_kwh=0.8)
+        config = build_task_config("dishwasher", profile, Settings())
+        assert isinstance(config, DishwasherConfig)
+        assert config.target_runs_per_week == 9
+        assert config.wash_budget_pence == 12.0
+        assert config.machine_kwh == 0.8
+
+    def test_dishwasher_with_profile_keeps_its_own_weather_defaults(self) -> None:
+        # profile.min_uv/max_rain_probability default to laundry-oriented
+        # values (3.0 / 40) but must NOT leak into the dishwasher config,
+        # which is designed to have no weather gate (0 / 100).
+        profile = TaskProfile()
+        config = build_task_config("dishwasher", profile, Settings())
+        assert isinstance(config, DishwasherConfig)
+        assert config.min_uv == 0.0
+        assert config.max_rain_probability == 100
+
+    def test_ev_key_reaches_ev_charging_config(self) -> None:
+        # Known trap: registry key "ev" != EVChargingConfig.task_name "ev_charging".
+        profile = TaskProfile(target_per_week=4)
+        config = build_task_config("ev", profile, Settings())
+        assert isinstance(config, EVChargingConfig)
+        assert config.task_name == "ev_charging"
+        assert config.target_runs_per_week == 4
+
+    def test_ev_no_profile_uses_registry_defaults(self) -> None:
+        config = build_task_config("ev", None, Settings())
+        assert isinstance(config, EVChargingConfig)
+        assert config.target_runs_per_week == 3  # EVChargingConfig's own default
+
+    def test_unknown_task_key_raises_key_error(self) -> None:
+        with pytest.raises(KeyError):
+            build_task_config("gardening", None, Settings())

@@ -50,7 +50,7 @@ from aws_lambda_powertools import Logger, Tracer
 from hrse.clients.octopus import OctopusClientProtocol, get_octopus_client
 from hrse.clients.weather import WeatherClientProtocol, get_weather_client
 from hrse.config import get_settings
-from hrse.models.task_config import TASK_REGISTRY, LaundryTaskConfig
+from hrse.models.task_config import TASK_REGISTRY, LaundryTaskConfig, build_task_config
 from hrse.services.decision_engine import DecisionService
 from hrse.services.notification import NotificationKind, NotificationService
 from hrse.services.weekly_state import WeeklyStateService
@@ -64,7 +64,6 @@ if TYPE_CHECKING:
 
     from hrse.models.chat_settings import ChatSettings
     from hrse.models.recommendation import Recommendation
-    from hrse.models.task_config import FlexibleTaskConfig
     from hrse.store.protocol import EventStore
 
 logger = Logger()
@@ -176,28 +175,23 @@ def handler(
     )
 
     # Format and send a per-chat Telegram notification: one recommendation
-    # per enabled task (Sprint 5C), honouring the chat's own laundry profile
-    # (Sprint 5B) where one has been configured. Chats with no stored
+    # per enabled task, honouring each task's own per-chat TaskProfile
+    # (Sprint 5D) where one has been configured. Chats with no stored
     # settings default to ["laundry"], matching pre-5C behaviour exactly.
     for chat_id in chat_ids:
         chat_settings = _safe_get_chat_settings(settings_store, chat_id)
-        profile = chat_settings.profile if chat_settings is not None else None
+        profiles = chat_settings.profiles if chat_settings is not None else {}
         enabled_tasks = chat_settings.enabled_tasks if chat_settings is not None else ["laundry"]
 
         chat_recommendations: list[Recommendation] = []
         for task_name in enabled_tasks:
-            task_config: FlexibleTaskConfig
-            if task_name == "laundry":
-                task_config = LaundryTaskConfig.from_profile_or_settings(profile, global_settings)
-            else:
-                config_cls = TASK_REGISTRY.get(task_name)
-                if config_cls is None:
-                    logger.warning(
-                        "Unknown enabled task; skipping",
-                        extra={"chat_id": chat_id, "task": task_name},
-                    )
-                    continue
-                task_config = config_cls()
+            if task_name not in TASK_REGISTRY:
+                logger.warning(
+                    "Unknown enabled task; skipping",
+                    extra={"chat_id": chat_id, "task": task_name},
+                )
+                continue
+            task_config = build_task_config(task_name, profiles.get(task_name), global_settings)
             chat_recommendations.append(
                 DecisionService().evaluate(
                     summary=summary, prices=prices, forecast=forecast, config=task_config
@@ -208,7 +202,7 @@ def handler(
             logger.warning("No valid enabled tasks; nothing to send", extra={"chat_id": chat_id})
             continue
 
-        tz_name = profile.timezone if profile is not None and profile.timezone else None
+        tz_name = chat_settings.effective_timezone if chat_settings is not None else None
         display_tz = ZoneInfo(tz_name or global_settings.display_timezone)
         message = NotificationService(display_tz=display_tz).format_multi(
             chat_recommendations, kind

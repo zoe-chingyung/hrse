@@ -291,10 +291,10 @@ def handle_prices(
 
 
 def _parse_setup_target(text: str) -> int:
-    """Parse the laundry-runs-per-week answer; must be a positive integer."""
+    """Parse the runs-per-week answer; must be a positive integer."""
     value = int(text.strip())
     if value < 1:
-        raise ValueError("laundry_target_per_week must be >= 1")
+        raise ValueError("target_per_week must be >= 1")
     return value
 
 
@@ -333,14 +333,18 @@ def _parse_setup_budget(text: str) -> float:
 # duration_slots, machine_kwh, min_uv, and max_rain_probability are
 # deliberately not asked — they keep TaskProfile's defaults, per spec, to
 # keep the onboarding flow short.
+# NOTE (5D.1): still laundry-only — /setup always configures profiles["laundry"].
+# Per-task step lists and `/setup <task>` land in 5D.2.
 _SETUP_STEPS: tuple[tuple[str, MessageKey, Callable[[str], object]], ...] = (
-    ("laundry_target_per_week", MessageKey.SETUP_Q_LAUNDRY_TARGET, _parse_setup_target),
+    ("target_per_week", MessageKey.SETUP_Q_LAUNDRY_TARGET, _parse_setup_target),
     ("earliest_start", MessageKey.SETUP_Q_EARLIEST_START, _parse_setup_hhmm),
     ("latest_finish", MessageKey.SETUP_Q_LATEST_FINISH, _parse_setup_hhmm),
     ("outdoor_drying", MessageKey.SETUP_Q_OUTDOOR_DRYING, _parse_setup_bool),
     ("timezone", MessageKey.SETUP_Q_TIMEZONE, _parse_setup_timezone),
     ("wash_budget_pence", MessageKey.SETUP_Q_WASH_BUDGET, _parse_setup_budget),
 )
+
+_SETUP_TASK_KEY = "laundry"
 
 
 def handle_setup_start(
@@ -351,8 +355,9 @@ def handle_setup_start(
 ) -> None:
     """Start (or restart) the /setup onboarding conversation.
 
-    Resets this chat's profile to fresh defaults and asks question 0;
+    Resets this chat's laundry profile to fresh defaults and asks question 0;
     "restart" means starting over, not resuming a half-finished attempt.
+    Other tasks' profiles and this chat's enabled tasks are preserved.
 
     Args:
         chat_id:        Telegram chat to onboard.
@@ -360,12 +365,16 @@ def handle_setup_start(
         settings_store: Store used to persist onboarding progress.
         lang:           Display language for the questions.
     """
+    existing = settings_store.get(chat_id)
+    profiles = dict(existing.profiles) if existing is not None else {}
+    profiles[_SETUP_TASK_KEY] = TaskProfile()
     settings_store.save(
         ChatSettings(
             chat_id=chat_id,
             language=lang,
-            profile=TaskProfile(),
+            profiles=profiles,
             onboarding_step=0,
+            enabled_tasks=existing.enabled_tasks if existing is not None else ["laundry"],
             updated_at=utcnow(),
         )
     )
@@ -400,7 +409,7 @@ def handle_onboarding_answer(
 
     step = settings.onboarding_step
     field_name, question_key, parser = _SETUP_STEPS[step]
-    profile = settings.profile or TaskProfile()
+    profile = settings.profiles.get(_SETUP_TASK_KEY) or TaskProfile()
 
     try:
         value = parser(text)
@@ -420,8 +429,9 @@ def handle_onboarding_answer(
         ChatSettings(
             chat_id=chat_id,
             language=settings.language,
-            profile=updated_profile,
+            profiles={**settings.profiles, _SETUP_TASK_KEY: updated_profile},
             onboarding_step=None if is_done else next_step,
+            enabled_tasks=settings.enabled_tasks,
             updated_at=utcnow(),
         )
     )
@@ -447,7 +457,7 @@ def handle_profile(
         lang:           Display language.
     """
     settings = settings_store.get(chat_id)
-    profile = settings.profile if settings is not None else None
+    profile = settings.profiles.get(_SETUP_TASK_KEY) if settings is not None else None
 
     if profile is None:
         client.send_message(chat_id=chat_id, text=t(MessageKey.PROFILE_NONE, lang))
@@ -458,7 +468,7 @@ def handle_profile(
         text=t(
             MessageKey.PROFILE_HEADER,
             lang,
-            target=profile.laundry_target_per_week,
+            target=profile.target_per_week,
             earliest=profile.earliest_start,
             latest=profile.latest_finish,
             budget=f"{profile.wash_budget_pence:g}",
@@ -474,7 +484,7 @@ def handle_reset(
     settings_store: ChatSettingsStore,
     lang: Language,
 ) -> None:
-    """Clear this chat's profile, reverting it to the global defaults.
+    """Clear this chat's laundry profile, reverting it to the global defaults.
 
     Args:
         chat_id:        Telegram chat to reply to.
@@ -487,8 +497,9 @@ def handle_reset(
         ChatSettings(
             chat_id=chat_id,
             language=settings.language if settings is not None else lang,
-            profile=None,
+            profiles={},
             onboarding_step=None,
+            enabled_tasks=settings.enabled_tasks if settings is not None else ["laundry"],
             updated_at=utcnow(),
         )
     )
@@ -638,7 +649,7 @@ def _with_enabled_tasks(
     return ChatSettings(
         chat_id=chat_id,
         language=settings.language if settings is not None else lang,
-        profile=settings.profile if settings is not None else None,
+        profiles=settings.profiles if settings is not None else {},
         onboarding_step=settings.onboarding_step if settings is not None else None,
         enabled_tasks=enabled_tasks,
         updated_at=utcnow(),

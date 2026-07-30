@@ -169,7 +169,7 @@ class LaundryTaskConfig(_TaskConfigBase):
         if profile is None:
             return cls.from_settings(settings)
         return cls(
-            target_runs_per_week=profile.laundry_target_per_week,
+            target_runs_per_week=profile.target_per_week,
             duration_slots=profile.duration_slots,
             earliest_start=profile.earliest_start,
             latest_finish=profile.latest_finish,
@@ -257,3 +257,58 @@ TASK_REGISTRY: dict[str, type[FlexibleTaskConfig]] = {
     "dishwasher": DishwasherConfig,
     "ev": EVChargingConfig,
 }
+
+
+def build_task_config(
+    task_key: str, profile: TaskProfile | None, settings: Settings
+) -> FlexibleTaskConfig:
+    """Build the ``FlexibleTaskConfig`` for one enabled task (Sprint 5D).
+
+    Precedence: a per-chat ``TaskProfile`` for this task wins; otherwise the
+    task falls back to its own defaults — global env-driven ``Settings`` for
+    laundry, or the ``TASK_REGISTRY`` built-in defaults for every other task
+    (there's no per-task env config yet).
+
+    Args:
+        task_key: A ``TASK_REGISTRY`` key (e.g. ``"laundry"``,
+                  ``"dishwasher"``, ``"ev"``) — NOT necessarily the same as
+                  the resulting config's ``task_name``
+                  (``EVChargingConfig.task_name`` is ``"ev_charging"``, not
+                  ``"ev"``). Callers keep using the registry key for
+                  ``enabled_tasks`` / ``profiles`` lookups; only the
+                  returned config's ``task_name`` differs.
+        profile:  This chat's ``TaskProfile`` for ``task_key``, or ``None``.
+        settings: The application's global ``Settings``, used for laundry's
+                  fallback.
+
+    Returns:
+        A validated ``FlexibleTaskConfig``.
+
+    Raises:
+        KeyError: If ``task_key`` is not a ``TASK_REGISTRY`` key.
+    """
+    if task_key == "laundry":
+        return LaundryTaskConfig.from_profile_or_settings(profile, settings)
+
+    config_cls = TASK_REGISTRY[task_key]
+    if profile is None:
+        return config_cls()
+
+    # NOTE (5D): min_uv/max_rain_probability are deliberately NOT taken from
+    # the profile for non-laundry tasks. /setup's per-task step list only
+    # asks weather questions for laundry, so a non-laundry profile's weather
+    # fields are always just TaskProfile's untouched defaults — copying them
+    # would silently re-enable a weather gate for dishwasher/EV, which are
+    # designed to be weather-gate-free. The task class's own
+    # min_uv/max_rain_probability defaults are used instead.
+    # Protocol classes have no constructor signature for mypy to check kwargs
+    # against; every TASK_REGISTRY value is actually a pydantic
+    # _TaskConfigBase subclass accepting these fields (ignore below is safe).
+    return config_cls(  # type: ignore[call-arg]
+        target_runs_per_week=profile.target_per_week,
+        duration_slots=profile.duration_slots,
+        earliest_start=profile.earliest_start,
+        latest_finish=profile.latest_finish,
+        wash_budget_pence=profile.wash_budget_pence,
+        machine_kwh=profile.machine_kwh,
+    )

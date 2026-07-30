@@ -90,18 +90,47 @@ class TestS3ChatSettingsStore:
         original = ChatSettings(
             chat_id=-7,
             language=Language.ZH,
-            profile=TaskProfile(
-                laundry_target_per_week=3,
-                earliest_start="07:00",
-                latest_finish="21:00",
-                outdoor_drying=False,
-                timezone="Asia/Hong_Kong",
-            ),
+            profiles={
+                "laundry": TaskProfile(
+                    target_per_week=3,
+                    earliest_start="07:00",
+                    latest_finish="21:00",
+                    outdoor_drying=False,
+                    timezone="Asia/Hong_Kong",
+                )
+            },
             onboarding_step=None,
             updated_at=_NOW,
         )
         store.save(original)
         assert store.get(-7) == original
+
+    def test_round_trip_with_two_task_profiles(self, store: S3ChatSettingsStore) -> None:
+        original = ChatSettings(
+            chat_id=-8,
+            profiles={
+                "laundry": TaskProfile(target_per_week=3, timezone="Europe/London"),
+                "ev": TaskProfile(target_per_week=2, wash_budget_pence=150.0),
+            },
+            enabled_tasks=["laundry", "ev"],
+            updated_at=_NOW,
+        )
+        store.save(original)
+        assert store.get(-8) == original
+
+    def test_legacy_single_profile_json_loads_via_s3(self, store: S3ChatSettingsStore) -> None:
+        # Simulates an S3 object written by pre-5D code — no "profiles" key.
+        client = boto3.client("s3", region_name=_REGION)
+        legacy_body = (
+            '{"chat_id": -9, "language": "en", '
+            '"profile": {"target_per_week": 4}, "onboarding_step": null, '
+            '"enabled_tasks": ["laundry"], "updated_at": "2026-07-12T10:00:00Z"}'
+        )
+        client.put_object(Bucket=_BUCKET, Key="settings/-9.json", Body=legacy_body.encode())
+
+        loaded = store.get(-9)
+        assert loaded is not None
+        assert loaded.profiles == {"laundry": TaskProfile(target_per_week=4)}
 
 
 # ---------------------------------------------------------------------------

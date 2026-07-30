@@ -1,20 +1,23 @@
 """Domain models for per-chat settings.
 
-Sprint 6 — Group onboarding & language.
+Sprint 6  — Group onboarding & language.
 Sprint 5B — Per-chat task profile & onboarding state machine.
+Sprint 5D — Per-task profiles (dict keyed by TASK_REGISTRY key, not a
+            single laundry-only profile).
 
 Each Telegram chat (private or group) can carry its own settings: display
-language, an optional per-chat laundry ``TaskProfile``, and the transient
-step counter for an in-progress ``/setup`` conversation.
+language, a per-task-keyed dict of ``TaskProfile`` overrides, and the
+transient state for an in-progress ``/setup`` conversation.
 """
 
 from __future__ import annotations
 
 from datetime import datetime  # noqa: TCH003 — used as Pydantic field type at runtime
 from enum import StrEnum
+from typing import Any
 from zoneinfo import available_timezones
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
+from pydantic import AliasChoices, BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from hrse.utils.datetime_utils import parse_hhmm
 
@@ -31,26 +34,28 @@ class Language(StrEnum):
 
 
 class TaskProfile(BaseModel):
-    """Per-chat laundry task constraints, set via the ``/setup`` conversation.
+    """Per-chat constraints for one task, set via the ``/setup`` conversation.
 
-    Mirrors ``LaundryTaskConfig`` field-for-field (see
-    ``LaundryTaskConfig.from_profile_or_settings``) plus two chat-specific
-    extras collected during onboarding:
+    Mirrors the ``FlexibleTaskConfig`` shape field-for-field (see
+    ``build_task_config`` in ``models.task_config``) plus two extras
+    collected during onboarding:
 
     * ``outdoor_drying`` — reserved for a future weather-gate refinement;
       collected now so the onboarding flow doesn't need a second pass later.
-    * ``timezone`` — NOTE: not part of the engine's constraint set. The spec
-      for this phase asks onboarding to collect a per-chat IANA timezone and
-      "store it on the profile", so it lives here rather than on
-      ``ChatSettings`` directly; it is consumed by the display layer
-      (``handle_prices`` / ``NotificationService``) in preference to the
-      global ``HRSE_TIMEZONE``, the same way ``display_tz`` already flows.
+      Only meaningful for laundry; not asked for other tasks.
+    * ``timezone`` — NOT part of the engine's constraint set. Consumed by
+      the display layer (``handle_prices`` / ``NotificationService``) via
+      ``ChatSettings.effective_timezone``, in preference to the global
+      ``HRSE_DISPLAY_TIMEZONE``.
     """
 
     model_config = ConfigDict(frozen=True)
 
-    laundry_target_per_week: int = Field(
-        default=2, ge=1, description="Desired laundry runs per week"
+    target_per_week: int = Field(
+        default=2,
+        ge=1,
+        validation_alias=AliasChoices("target_per_week", "laundry_target_per_week"),
+        description="Desired runs per week for this task",
     )
     duration_slots: int = Field(
         default=4,
@@ -59,13 +64,11 @@ class TaskProfile(BaseModel):
     )
     earliest_start: str = Field(default="08:00", description="Earliest start time, HH:MM")
     latest_finish: str = Field(default="22:00", description="Latest finish time, HH:MM")
-    wash_budget_pence: float = Field(
-        default=40.0, gt=0, description="Max spend per wash cycle in pence"
-    )
-    machine_kwh: float = Field(default=1.5, gt=0, description="Energy per wash cycle in kWh")
-    min_uv: float = Field(default=3.0, ge=0, description="Lower UV threshold")
+    wash_budget_pence: float = Field(default=40.0, gt=0, description="Max spend per run in pence")
+    machine_kwh: float = Field(default=1.5, gt=0, description="Energy per run in kWh")
+    min_uv: float = Field(default=3.0, ge=0, description="Lower UV threshold (laundry only)")
     max_rain_probability: int = Field(
-        default=40, ge=0, le=100, description="Upper rain probability threshold (percent)"
+        default=40, ge=0, le=100, description="Upper rain probability threshold, % (laundry only)"
     )
     outdoor_drying: bool = Field(default=True, description="Whether laundry dries outdoors")
     timezone: str | None = Field(
@@ -101,8 +104,11 @@ class ChatSettings(BaseModel):
     Attributes:
         chat_id:         Telegram chat identifier. Negative for groups.
         language:        Display language for bot replies in this chat.
-        profile:         Per-chat laundry constraints, or None to use the
-                         global ``Settings`` defaults from Sprint 5A.
+        profiles:        Per-task constraints, keyed by ``TASK_REGISTRY``
+                         key (e.g. ``"laundry"``, ``"dishwasher"``, ``"ev"``
+                         — NOT the config's ``task_name``, see
+                         ``build_task_config``). A task with no entry here
+                         uses the global ``Settings``/registry defaults.
         onboarding_step: Index of the current ``/setup`` question this chat
                          is answering, or None when no onboarding is active.
                          Transient — cleared once ``/setup`` completes.
@@ -118,8 +124,8 @@ class ChatSettings(BaseModel):
 
     chat_id: int = Field(..., description="Telegram chat identifier (negative for groups)")
     language: Language = Field(default=Language.EN, description="Display language")
-    profile: TaskProfile | None = Field(
-        default=None, description="Per-chat laundry constraints, or None for global defaults"
+    profiles: dict[str, TaskProfile] = Field(
+        default_factory=dict, description="Per-task constraints, keyed by TASK_REGISTRY key"
     )
     onboarding_step: int | None = Field(
         default=None, description="Current /setup question index, or None if not onboarding"
@@ -129,3 +135,41 @@ class ChatSettings(BaseModel):
         description="Task registry keys this chat gets recommendations for",
     )
     updated_at: datetime = Field(..., description="UTC timestamp of last update")
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_legacy_profile(cls, data: Any) -> Any:  # noqa: ANN401 — before-validator input
+        """Migrate a legacy single ``profile`` key to ``profiles["laundry"]``.
+
+        Pre-5D persisted JSON (and pre-5D code) used a single
+        ``profile: TaskProfile | None`` field. Idempotent: if ``profiles``
+        is already present, the input is assumed already migrated and
+        passed through unchanged — this is what makes it safe to run on
+        every load, not just once.
+        """
+        if not isinstance(data, dict):
+            return data
+        if "profiles" in data:
+            return data
+        data = dict(data)
+        legacy_profile = data.pop("profile", None)
+        data["profiles"] = {"laundry": legacy_profile} if legacy_profile is not None else {}
+        return data
+
+    @property
+    def effective_timezone(self) -> str | None:
+        """Return this chat's preferred display timezone, or None for the global default.
+
+        NOTE (5D): timezone can be answered during any task's ``/setup``, so
+        multiple profiles could each carry one. The laundry profile's
+        timezone wins if set (the field's original home, from before
+        per-task profiles existed); otherwise the first other profile
+        (dict insertion order) with a timezone set is used.
+        """
+        laundry_profile = self.profiles.get("laundry")
+        if laundry_profile is not None and laundry_profile.timezone:
+            return laundry_profile.timezone
+        for profile in self.profiles.values():
+            if profile.timezone:
+                return profile.timezone
+        return None

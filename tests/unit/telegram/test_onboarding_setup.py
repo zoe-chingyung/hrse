@@ -44,7 +44,7 @@ class TestHandleSetupStart:
         saved = store.get(_CHAT)
         assert saved is not None
         assert saved.onboarding_step == 0
-        assert saved.profile == TaskProfile()
+        assert saved.profiles["laundry"] == TaskProfile()
 
     def test_sends_first_question(self) -> None:
         client = _mock_client()
@@ -65,7 +65,7 @@ class TestHandleSetupStart:
         store.save(
             ChatSettings(
                 chat_id=_CHAT,
-                profile=TaskProfile(laundry_target_per_week=9),
+                profiles={"laundry": TaskProfile(target_per_week=9)},
                 onboarding_step=4,
                 updated_at=utcnow(),
             )
@@ -77,7 +77,7 @@ class TestHandleSetupStart:
         saved = store.get(_CHAT)
         assert saved is not None
         assert saved.onboarding_step == 0
-        assert saved.profile == TaskProfile()
+        assert saved.profiles["laundry"] == TaskProfile()
 
     def test_preserves_passed_language(self) -> None:
         store = InMemoryChatSettingsStore()
@@ -85,6 +85,37 @@ class TestHandleSetupStart:
             chat_id=_CHAT, client=_mock_client(), settings_store=store, lang=Language.ZH
         )
         assert store.get(_CHAT).language is Language.ZH  # type: ignore[union-attr]
+
+    def test_preserves_enabled_tasks(self) -> None:
+        # Regression guard: /setup must not silently reset enabled_tasks
+        # back to the ["laundry"] default for a chat that has customised it.
+        store = InMemoryChatSettingsStore()
+        store.save(
+            ChatSettings(
+                chat_id=_CHAT, enabled_tasks=["laundry", "dishwasher"], updated_at=utcnow()
+            )
+        )
+        handle_setup_start(
+            chat_id=_CHAT, client=_mock_client(), settings_store=store, lang=Language.EN
+        )
+        assert store.get(_CHAT).enabled_tasks == ["laundry", "dishwasher"]  # type: ignore[union-attr]
+
+    def test_preserves_other_task_profiles(self) -> None:
+        store = InMemoryChatSettingsStore()
+        store.save(
+            ChatSettings(
+                chat_id=_CHAT,
+                profiles={"dishwasher": TaskProfile(target_per_week=7)},
+                updated_at=utcnow(),
+            )
+        )
+        handle_setup_start(
+            chat_id=_CHAT, client=_mock_client(), settings_store=store, lang=Language.EN
+        )
+        saved = store.get(_CHAT)
+        assert saved is not None
+        assert saved.profiles["dishwasher"] == TaskProfile(target_per_week=7)
+        assert saved.profiles["laundry"] == TaskProfile()
 
 
 # ---------------------------------------------------------------------------
@@ -108,9 +139,9 @@ class TestOnboardingHappyPath:
         saved = store.get(_CHAT)
         assert saved is not None
         assert saved.onboarding_step is None
-        profile = saved.profile
+        profile = saved.profiles.get("laundry")
         assert profile is not None
-        assert profile.laundry_target_per_week == 3
+        assert profile.target_per_week == 3
         assert profile.earliest_start == "07:00"
         assert profile.latest_finish == "21:00"
         assert profile.outdoor_drying is True
@@ -188,7 +219,7 @@ class TestOnboardingValidation:
 
         _answer(store, client, "08:00")  # step 2: before earliest_start (20:00)
         assert store.get(_CHAT).onboarding_step == 2  # type: ignore[union-attr]
-        assert store.get(_CHAT).profile.latest_finish == "22:00"  # type: ignore[union-attr]
+        assert store.get(_CHAT).profiles["laundry"].latest_finish == "22:00"  # type: ignore[union-attr]
 
     def test_unrecognised_yes_no_reasks_same_step(self) -> None:
         store = InMemoryChatSettingsStore()
@@ -265,14 +296,16 @@ class TestHandleProfile:
         store.save(
             ChatSettings(
                 chat_id=_CHAT,
-                profile=TaskProfile(
-                    laundry_target_per_week=3,
-                    earliest_start="07:00",
-                    latest_finish="21:00",
-                    wash_budget_pence=35.0,
-                    outdoor_drying=False,
-                    timezone="Europe/London",
-                ),
+                profiles={
+                    "laundry": TaskProfile(
+                        target_per_week=3,
+                        earliest_start="07:00",
+                        latest_finish="21:00",
+                        wash_budget_pence=35.0,
+                        outdoor_drying=False,
+                        timezone="Europe/London",
+                    )
+                },
                 updated_at=utcnow(),
             )
         )
@@ -290,7 +323,9 @@ class TestHandleProfile:
 
     def test_zh_variant_differs(self) -> None:
         store = InMemoryChatSettingsStore()
-        store.save(ChatSettings(chat_id=_CHAT, profile=TaskProfile(), updated_at=utcnow()))
+        store.save(
+            ChatSettings(chat_id=_CHAT, profiles={"laundry": TaskProfile()}, updated_at=utcnow())
+        )
         client = _mock_client()
         handle_profile(chat_id=_CHAT, client=client, settings_store=store, lang=Language.ZH)
         _, kwargs = client.send_message.call_args
@@ -309,7 +344,7 @@ class TestHandleReset:
             ChatSettings(
                 chat_id=_CHAT,
                 language=Language.ZH,
-                profile=TaskProfile(laundry_target_per_week=5),
+                profiles={"laundry": TaskProfile(target_per_week=5)},
                 onboarding_step=2,
                 updated_at=utcnow(),
             )
@@ -318,9 +353,19 @@ class TestHandleReset:
 
         saved = store.get(_CHAT)
         assert saved is not None
-        assert saved.profile is None
+        assert saved.profiles == {}
         assert saved.onboarding_step is None
         assert saved.language is Language.ZH  # preserved, not overwritten by the passed-in lang
+
+    def test_reset_preserves_enabled_tasks(self) -> None:
+        store = InMemoryChatSettingsStore()
+        store.save(
+            ChatSettings(
+                chat_id=_CHAT, enabled_tasks=["laundry", "dishwasher"], updated_at=utcnow()
+            )
+        )
+        handle_reset(chat_id=_CHAT, client=_mock_client(), settings_store=store, lang=Language.EN)
+        assert store.get(_CHAT).enabled_tasks == ["laundry", "dishwasher"]  # type: ignore[union-attr]
 
     def test_sends_confirmation(self) -> None:
         client = _mock_client()

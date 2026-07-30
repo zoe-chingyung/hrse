@@ -268,7 +268,7 @@ class TestPerChatProfile:
             {
                 123456789: ChatSettings(
                     chat_id=123456789,
-                    profile=TaskProfile(wash_budget_pence=1.0),
+                    profiles={"laundry": TaskProfile(wash_budget_pence=1.0)},
                     updated_at=datetime.now(tz=UTC),
                 )
             }
@@ -284,7 +284,7 @@ class TestPerChatProfile:
             {
                 123456789: ChatSettings(
                     chat_id=123456789,
-                    profile=TaskProfile(timezone="Asia/Hong_Kong"),
+                    profiles={"laundry": TaskProfile(timezone="Asia/Hong_Kong")},
                     updated_at=datetime.now(tz=UTC),
                 )
             }
@@ -299,6 +299,38 @@ class TestPerChatProfile:
         response, mock_telegram = _invoke("DailyPlanning", settings_store=broken)
         assert json.loads(response["body"])["recommended"] is True
         mock_telegram.send_message.assert_called_once()
+
+    def test_legacy_single_profile_chat_settings_still_works(self) -> None:
+        # Sprint 5D regression fixture: a chat whose ChatSettings was
+        # constructed the pre-5D way (single `profile=` kwarg, migrated to
+        # profiles["laundry"] by the before-validator) must behave
+        # identically to one built with the new `profiles=` dict.
+        legacy_settings = ChatSettings(
+            chat_id=123456789,
+            profile=TaskProfile(wash_budget_pence=1.0),
+            updated_at=datetime.now(tz=UTC),
+        )
+        assert legacy_settings.profiles == {"laundry": TaskProfile(wash_budget_pence=1.0)}
+        store = _StubSettingsStore({123456789: legacy_settings})
+        _, mock_telegram = _invoke("DailyPlanning", settings_store=store)
+        _, kwargs = mock_telegram.send_message.call_args
+        assert "not recommended" in kwargs["text"].lower()
+
+    def test_dishwasher_only_chat_gets_dishwasher_recommendation(self) -> None:
+        store = _StubSettingsStore(
+            {
+                123456789: ChatSettings(
+                    chat_id=123456789,
+                    enabled_tasks=["dishwasher"],
+                    profiles={"dishwasher": TaskProfile(target_per_week=1)},
+                    updated_at=datetime.now(tz=UTC),
+                )
+            }
+        )
+        _, mock_telegram = _invoke("DailyPlanning", settings_store=store)
+        _, kwargs = mock_telegram.send_message.call_args
+        assert "Dishwasher" not in kwargs["text"]  # single-task → no task label block
+        assert "Tomorrow" in kwargs["text"]
 
 
 # ---------------------------------------------------------------------------

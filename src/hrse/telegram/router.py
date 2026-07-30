@@ -315,16 +315,13 @@ def _load_chat_settings(
 
 
 def _effective_timezone(chat_settings: ChatSettings | None, default: str) -> str:
-    """Return the chat's profile timezone if set, else the global ``default``.
+    """Return the chat's preferred profile timezone if set, else the global ``default``.
 
     Mirrors how ``language`` already prefers the per-chat value (Sprint 5B).
+    See ``ChatSettings.effective_timezone`` for the per-task precedence.
     """
-    if (
-        chat_settings is not None
-        and chat_settings.profile is not None
-        and chat_settings.profile.timezone
-    ):
-        return chat_settings.profile.timezone
+    if chat_settings is not None and chat_settings.effective_timezone:
+        return chat_settings.effective_timezone
     return default
 
 

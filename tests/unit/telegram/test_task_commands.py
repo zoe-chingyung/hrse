@@ -132,7 +132,7 @@ class TestHandleAddTask:
             ChatSettings(
                 chat_id=_CHAT,
                 language=Language.ZH,
-                profile=TaskProfile(laundry_target_per_week=3),
+                profiles={"laundry": TaskProfile(target_per_week=3)},
                 enabled_tasks=["laundry"],
                 updated_at=utcnow(),
             )
@@ -147,8 +147,8 @@ class TestHandleAddTask:
         saved = store.get(_CHAT)
         assert saved is not None
         assert saved.language is Language.ZH
-        assert saved.profile is not None
-        assert saved.profile.laundry_target_per_week == 3
+        assert saved.profiles.get("laundry") is not None
+        assert saved.profiles["laundry"].target_per_week == 3
         assert saved.enabled_tasks == ["laundry", "ev"]
 
     def test_confirmation_sent_to_correct_chat(self) -> None:

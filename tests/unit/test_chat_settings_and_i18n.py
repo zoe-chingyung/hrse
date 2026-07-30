@@ -51,30 +51,107 @@ class TestChatSettings:
         restored = ChatSettings.model_validate_json(original.model_dump_json())
         assert restored == original
 
-    def test_defaults_profile_and_onboarding_step_to_none(self) -> None:
+    def test_defaults_profiles_and_onboarding_step_to_empty(self) -> None:
         settings = ChatSettings(chat_id=1, updated_at=_NOW)
-        assert settings.profile is None
+        assert settings.profiles == {}
         assert settings.onboarding_step is None
 
     def test_json_round_trip_with_full_profile(self) -> None:
         original = ChatSettings(
             chat_id=-5,
             language=Language.ZH,
-            profile=TaskProfile(laundry_target_per_week=3, timezone="Asia/Hong_Kong"),
+            profiles={"laundry": TaskProfile(target_per_week=3, timezone="Asia/Hong_Kong")},
             onboarding_step=2,
             updated_at=_NOW,
         )
         restored = ChatSettings.model_validate_json(original.model_dump_json())
         assert restored == original
 
-    def test_old_json_without_profile_field_still_loads(self) -> None:
-        # Pre-5B persisted JSON never had `profile`/`onboarding_step` keys.
+    def test_json_round_trip_with_multiple_task_profiles(self) -> None:
+        original = ChatSettings(
+            chat_id=-5,
+            profiles={
+                "laundry": TaskProfile(target_per_week=3),
+                "dishwasher": TaskProfile(target_per_week=7, wash_budget_pence=20.0),
+            },
+            updated_at=_NOW,
+        )
+        restored = ChatSettings.model_validate_json(original.model_dump_json())
+        assert restored == original
+
+    def test_old_json_without_profiles_field_still_loads(self) -> None:
+        # Pre-5B persisted JSON never had `profile`/`profiles`/`onboarding_step` keys.
         old_json = ChatSettings(chat_id=1, language=Language.EN, updated_at=_NOW).model_dump_json(
-            exclude={"profile", "onboarding_step"}
+            exclude={"profiles", "onboarding_step"}
         )
         restored = ChatSettings.model_validate_json(old_json)
-        assert restored.profile is None
+        assert restored.profiles == {}
         assert restored.onboarding_step is None
+
+    def test_legacy_single_profile_json_migrates_to_laundry_key(self) -> None:
+        # Pre-5D JSON shape: a top-level "profile" object, no "profiles" dict.
+        legacy_json = (
+            '{"chat_id": 1, "language": "en", '
+            '"profile": {"target_per_week": 3, "timezone": "Europe/London"}, '
+            '"onboarding_step": null, "enabled_tasks": ["laundry"], '
+            f'"updated_at": "{_NOW.isoformat()}"}}'
+        )
+        restored = ChatSettings.model_validate_json(legacy_json)
+        assert restored.profiles == {
+            "laundry": TaskProfile(target_per_week=3, timezone="Europe/London")
+        }
+
+    def test_legacy_null_profile_json_migrates_to_empty_dict(self) -> None:
+        legacy_json = (
+            '{"chat_id": 1, "language": "en", "profile": null, '
+            '"onboarding_step": null, "enabled_tasks": ["laundry"], '
+            f'"updated_at": "{_NOW.isoformat()}"}}'
+        )
+        restored = ChatSettings.model_validate_json(legacy_json)
+        assert restored.profiles == {}
+
+    def test_migration_validator_passes_through_non_dict_instance_input(self) -> None:
+        # model_validate() on an already-constructed instance (e.g. during a
+        # revalidating model_copy) passes a ChatSettings, not a dict, to the
+        # before-validator — it must pass through rather than error.
+        original = ChatSettings(chat_id=1, updated_at=_NOW)
+        revalidated = ChatSettings.model_validate(original)
+        assert revalidated == original
+
+    def test_migration_is_idempotent_for_already_migrated_json(self) -> None:
+        original = ChatSettings(
+            chat_id=1, profiles={"laundry": TaskProfile(target_per_week=4)}, updated_at=_NOW
+        )
+        once = ChatSettings.model_validate_json(original.model_dump_json())
+        twice = ChatSettings.model_validate_json(once.model_dump_json())
+        assert once == original
+        assert twice == original
+
+    def test_effective_timezone_none_when_no_profiles(self) -> None:
+        settings = ChatSettings(chat_id=1, updated_at=_NOW)
+        assert settings.effective_timezone is None
+
+    def test_effective_timezone_prefers_laundry_profile(self) -> None:
+        settings = ChatSettings(
+            chat_id=1,
+            profiles={
+                "laundry": TaskProfile(timezone="Europe/London"),
+                "dishwasher": TaskProfile(timezone="Asia/Hong_Kong"),
+            },
+            updated_at=_NOW,
+        )
+        assert settings.effective_timezone == "Europe/London"
+
+    def test_effective_timezone_falls_back_to_other_profile(self) -> None:
+        settings = ChatSettings(
+            chat_id=1,
+            profiles={
+                "laundry": TaskProfile(),  # no timezone set
+                "dishwasher": TaskProfile(timezone="Asia/Hong_Kong"),
+            },
+            updated_at=_NOW,
+        )
+        assert settings.effective_timezone == "Asia/Hong_Kong"
 
 
 # ---------------------------------------------------------------------------
@@ -85,7 +162,7 @@ class TestChatSettings:
 class TestTaskProfile:
     def test_all_defaults_are_valid(self) -> None:
         profile = TaskProfile()
-        assert profile.laundry_target_per_week == 2
+        assert profile.target_per_week == 2
         assert profile.duration_slots == 4
         assert profile.outdoor_drying is True
         assert profile.timezone is None
@@ -93,7 +170,7 @@ class TestTaskProfile:
     def test_is_frozen(self) -> None:
         profile = TaskProfile()
         with pytest.raises(ValidationError):
-            profile.laundry_target_per_week = 5  # type: ignore[misc]
+            profile.target_per_week = 5  # type: ignore[misc]
 
     def test_invalid_hhmm_rejected(self) -> None:
         with pytest.raises(ValidationError, match="HH:MM"):
@@ -105,7 +182,12 @@ class TestTaskProfile:
 
     def test_target_below_one_rejected(self) -> None:
         with pytest.raises(ValidationError):
-            TaskProfile(laundry_target_per_week=0)
+            TaskProfile(target_per_week=0)
+
+    def test_legacy_laundry_target_per_week_alias_still_accepted(self) -> None:
+        # Backward-compat for old code/JSON using the pre-5D field name.
+        profile = TaskProfile(laundry_target_per_week=6)
+        assert profile.target_per_week == 6
 
     def test_max_rain_probability_out_of_bounds_rejected(self) -> None:
         with pytest.raises(ValidationError):
