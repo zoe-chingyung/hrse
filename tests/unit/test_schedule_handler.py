@@ -153,7 +153,8 @@ class TestDailyPlanning:
 
     def test_recommended_sends_telegram_message(self) -> None:
         _, mock_telegram = _invoke("DailyPlanning")
-        mock_telegram.send_message.assert_called_once()
+        # One call for the price bar chart, one for the plan message.
+        assert mock_telegram.send_message.call_count == 2
         _, kwargs = mock_telegram.send_message.call_args
         assert kwargs["chat_id"] == 123456789
 
@@ -170,7 +171,7 @@ class TestDailyPlanning:
     def test_not_recommended_still_sends_message(self) -> None:
         tomorrow = (datetime.now(tz=UTC) + timedelta(days=1)).date()
         _, mock_telegram = _invoke("DailyPlanning", forecast=_bad_forecast(tomorrow))
-        mock_telegram.send_message.assert_called_once()
+        assert mock_telegram.send_message.call_count == 2
 
     def test_not_recommended_body_flag(self) -> None:
         tomorrow = (datetime.now(tz=UTC) + timedelta(days=1)).date()
@@ -207,6 +208,29 @@ class TestMorningReminder:
 # ---------------------------------------------------------------------------
 # Default / fallback
 # ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit()
+class TestPriceBarChart:
+    def test_chart_sent_before_plan_message_as_markdownv2(self) -> None:
+        _, mock_telegram = _invoke("DailyPlanning")
+        first_call, second_call = mock_telegram.send_message.call_args_list
+        assert first_call.kwargs["parse_mode"] == "MarkdownV2"
+        assert first_call.kwargs["text"].startswith("```\n")
+        assert "parse_mode" not in second_call.kwargs or second_call.kwargs["parse_mode"] == "HTML"
+
+    def test_chart_contains_a_price_row_for_each_slot(self) -> None:
+        _, mock_telegram = _invoke("DailyPlanning")
+        chart_text = mock_telegram.send_message.call_args_list[0].kwargs["text"]
+        assert chart_text.count("▇") >= 4  # 4 cheap slots from _cheap_prices
+
+    def test_no_chart_sent_when_no_prices_available(self) -> None:
+        tomorrow = (datetime.now(tz=UTC) + timedelta(days=1)).date()
+        response, mock_telegram = _invoke(
+            "DailyPlanning", prices=[], forecast=_bad_forecast(tomorrow)
+        )
+        assert response["statusCode"] == 200
+        mock_telegram.send_message.assert_called_once()  # plan message only, no chart
 
 
 @pytest.mark.unit()
@@ -298,7 +322,7 @@ class TestPerChatProfile:
         broken.get.side_effect = RuntimeError("s3 down")
         response, mock_telegram = _invoke("DailyPlanning", settings_store=broken)
         assert json.loads(response["body"])["recommended"] is True
-        mock_telegram.send_message.assert_called_once()
+        assert mock_telegram.send_message.call_count == 2
 
     def test_legacy_single_profile_chat_settings_still_works(self) -> None:
         # Sprint 5D regression fixture: a chat whose ChatSettings was
@@ -375,7 +399,7 @@ class TestMultiTaskNotifications:
         )
         response, mock_telegram = _invoke("DailyPlanning", settings_store=store)
         assert response["statusCode"] == 200
-        mock_telegram.send_message.assert_called_once()
+        assert mock_telegram.send_message.call_count == 2
 
     def test_all_enabled_tasks_unknown_sends_no_message(self) -> None:
         store = _StubSettingsStore(

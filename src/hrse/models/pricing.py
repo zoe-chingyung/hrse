@@ -27,3 +27,8 @@ class PricePoint(BaseModel):
 
     timestamp: datetime = Field(..., description="UTC start of the 30-minute period")
     price_pence: float = Field(..., description="Price in pence/kWh for this period")
+
+
+# Alias used by slot/bar-chart renderers, which think in terms of discrete
+# "slots" rather than continuous price series. Same shape as PricePoint.
+PriceSlot = PricePoint

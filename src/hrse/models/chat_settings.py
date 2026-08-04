@@ -134,7 +134,30 @@ class ChatSettings(BaseModel):
         default_factory=lambda: ["laundry"],
         description="Task registry keys this chat gets recommendations for",
     )
+    chart_green_threshold_pence: float = Field(
+        default=10.0,
+        ge=0,
+        description="Bar-chart tier boundary: prices below this render as 🟢",
+    )
+    chart_red_threshold_pence: float = Field(
+        default=20.0,
+        ge=0,
+        description="Bar-chart tier boundary: prices above this render as 🔴 (between is 🟡)",
+    )
+    chart_slot_limit: int = Field(
+        default=8,
+        ge=1,
+        le=48,
+        description="Max number of slots shown in the price bar chart notification",
+    )
     updated_at: datetime = Field(..., description="UTC timestamp of last update")
+
+    @model_validator(mode="after")
+    def _chart_thresholds_ordered(self) -> ChatSettings:
+        """Ensure the red-tier boundary isn't below the green-tier one."""
+        if self.chart_red_threshold_pence < self.chart_green_threshold_pence:
+            raise ValueError("chart_red_threshold_pence must be >= chart_green_threshold_pence")
+        return self
 
     @model_validator(mode="before")
     @classmethod

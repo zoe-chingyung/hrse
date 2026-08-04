@@ -50,9 +50,11 @@ from aws_lambda_powertools import Logger, Tracer
 from hrse.clients.octopus import OctopusClientProtocol, get_octopus_client
 from hrse.clients.weather import WeatherClientProtocol, get_weather_client
 from hrse.config import get_settings
+from hrse.models.chat_settings import ChatSettings
 from hrse.models.task_config import TASK_REGISTRY, LaundryTaskConfig, build_task_config
 from hrse.services.decision_engine import DecisionService
 from hrse.services.notification import NotificationKind, NotificationService
+from hrse.services.renderer import render_price_bar_chart
 from hrse.services.weekly_state import WeeklyStateService
 from hrse.store.chat_settings_store import ChatSettingsStore, get_chat_settings_store
 from hrse.store.s3_store import get_event_store
@@ -62,7 +64,6 @@ from hrse.telegram.token_provider import get_chat_ids_provider
 if TYPE_CHECKING:
     from aws_lambda_powertools.utilities.typing import LambdaContext
 
-    from hrse.models.chat_settings import ChatSettings
     from hrse.models.recommendation import Recommendation
     from hrse.store.protocol import EventStore
 
@@ -207,6 +208,20 @@ def handler(
         message = NotificationService(display_tz=display_tz).format_multi(
             chat_recommendations, kind
         )
+
+        # Bar chart is sent as its own MarkdownV2 message (ahead of the HTML
+        # plan/reminder message) since Telegram can't mix parse modes within
+        # one message. Sent first so mock/test assertions against "the last
+        # call" keep referring to the plan message, matching pre-chart tests.
+        if prices:
+            chart_settings = (
+                chat_settings
+                if chat_settings is not None
+                else ChatSettings(chat_id=chat_id, updated_at=now)
+            )
+            chart_text = render_price_bar_chart(prices, chart_settings)
+            telegram.send_message(chat_id=chat_id, text=chart_text, parse_mode="MarkdownV2")
+
         telegram.send_message(chat_id=chat_id, text=message)
         logger.info("Notification sent", extra={"chat_id": chat_id, "tasks": enabled_tasks})
 

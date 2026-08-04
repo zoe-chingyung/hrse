@@ -59,6 +59,8 @@ class MessageKey(StrEnum):
     TASK_ADDED = auto()
     TASK_NOT_ENABLED = auto()
     TASK_REMOVED = auto()
+    PRICE_BAR_CHART_TITLE = auto()
+    PRICE_BAR_CHART_FOOTER = auto()
 
 
 _COMMANDS_EN = (
@@ -307,6 +309,14 @@ _CATALOGUE: dict[MessageKey, dict[Language, str]] = {
     MessageKey.TASK_REMOVED: {
         Language.EN: "❌ {task} disabled.",
         Language.ZH: "❌ {task} 已停用。",
+    },
+    MessageKey.PRICE_BAR_CHART_TITLE: {
+        Language.EN: "⚡ Today's prices",
+        Language.ZH: "⚡ 今日電價走勢",
+    },
+    MessageKey.PRICE_BAR_CHART_FOOTER: {
+        Language.EN: "✅ Best wash time: from {time}",
+        Language.ZH: "✅ 最抵洗衫時間:由 {time} 開始",
     },
 }
 
