@@ -16,9 +16,11 @@ from typing import Any
 import pytest
 
 from hrse.clients.octopus import (
+    REGION_LETTERS,
     HttpOctopusClient,
     OctopusApiError,
     OctopusClientProtocol,
+    build_regional_tariff_code,
     get_octopus_client,
 )
 from hrse.models.pricing import PricePoint
@@ -36,6 +38,9 @@ class StubOctopusClient:
 
     def get_prices(self, period_from: datetime, period_to: datetime) -> list[PricePoint]:
         return list(self._prices)
+
+    def lookup_gsp(self, postcode: str) -> str | None:
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -189,3 +194,98 @@ class TestFactory:
         client = get_octopus_client()
         assert isinstance(client, HttpOctopusClient)
         get_octopus_client.cache_clear()
+
+
+# ---------------------------------------------------------------------------
+# Sprint B — build_regional_tariff_code (pure)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit()
+class TestBuildRegionalTariffCode:
+    def test_builds_expected_code_for_london(self) -> None:
+        assert build_regional_tariff_code("AGILE-24-10-01", "C") == "E-1R-AGILE-24-10-01-C"
+
+    @pytest.mark.parametrize("letter", REGION_LETTERS)
+    def test_every_valid_letter_builds_without_error(self, letter: str) -> None:
+        code = build_regional_tariff_code("AGILE-24-10-01", letter)
+        assert code == f"E-1R-AGILE-24-10-01-{letter}"
+
+    @pytest.mark.parametrize("letter", ["I", "O", "Q", "Z", "a", "c", "AB", "", "1"])
+    def test_invalid_letter_raises_value_error(self, letter: str) -> None:
+        with pytest.raises(ValueError, match="invalid GSP region letter"):
+            build_regional_tariff_code("AGILE-24-10-01", letter)
+
+
+# ---------------------------------------------------------------------------
+# Sprint B — HttpOctopusClient.lookup_gsp
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit()
+class TestLookupGsp:
+    def test_single_match_returns_region_letter(self, mocker: Any) -> None:
+        payload = {"count": 1, "next": None, "previous": None, "results": [{"group_id": "_C"}]}
+        mocker.patch("urllib.request.urlopen", return_value=_fake_response(payload))
+        assert _client().lookup_gsp("SW1A 1AA") == "C"
+
+    def test_no_match_returns_none(self, mocker: Any) -> None:
+        payload = {"count": 0, "next": None, "previous": None, "results": []}
+        mocker.patch("urllib.request.urlopen", return_value=_fake_response(payload))
+        assert _client().lookup_gsp("ZZ99 9ZZ") is None
+
+    def test_ambiguous_match_returns_none(self, mocker: Any) -> None:
+        payload = {
+            "count": 2,
+            "next": None,
+            "previous": None,
+            "results": [{"group_id": "_C"}, {"group_id": "_H"}],
+        }
+        mocker.patch("urllib.request.urlopen", return_value=_fake_response(payload))
+        assert _client().lookup_gsp("SW1A 1AA") is None
+
+    def test_malformed_group_id_returns_none(self, mocker: Any) -> None:
+        payload = {"count": 1, "next": None, "previous": None, "results": [{"group_id": "C"}]}
+        mocker.patch("urllib.request.urlopen", return_value=_fake_response(payload))
+        assert _client().lookup_gsp("SW1A 1AA") is None
+
+    def test_missing_group_id_returns_none(self, mocker: Any) -> None:
+        payload = {"count": 1, "next": None, "previous": None, "results": [{}]}
+        mocker.patch("urllib.request.urlopen", return_value=_fake_response(payload))
+        assert _client().lookup_gsp("SW1A 1AA") is None
+
+    def test_unrecognised_letter_returns_none(self, mocker: Any) -> None:
+        # Defensive: the API should never return I/O, but never trust it blindly.
+        payload = {"count": 1, "next": None, "previous": None, "results": [{"group_id": "_I"}]}
+        mocker.patch("urllib.request.urlopen", return_value=_fake_response(payload))
+        assert _client().lookup_gsp("SW1A 1AA") is None
+
+    def test_malformed_results_type_returns_none(self, mocker: Any) -> None:
+        payload = {"count": 1, "next": None, "previous": None, "results": "not-a-list"}
+        mocker.patch("urllib.request.urlopen", return_value=_fake_response(payload))
+        assert _client().lookup_gsp("SW1A 1AA") is None
+
+    def test_http_error_returns_none(self, mocker: Any) -> None:
+        err = urllib.error.HTTPError(
+            url="http://x", code=400, msg="Bad Request", hdrs=None, fp=io.BytesIO(b"{}")
+        )
+        mocker.patch("urllib.request.urlopen", side_effect=err)
+        assert _client().lookup_gsp("not a postcode") is None
+
+    def test_url_error_returns_none(self, mocker: Any) -> None:
+        mocker.patch(
+            "urllib.request.urlopen", side_effect=urllib.error.URLError("connection refused")
+        )
+        assert _client().lookup_gsp("SW1A 1AA") is None
+
+    def test_request_targets_gsp_endpoint_with_postcode(self, mocker: Any) -> None:
+        payload = {"results": [{"group_id": "_C"}]}
+        fake_open = mocker.patch("urllib.request.urlopen", return_value=_fake_response(payload))
+
+        _client().lookup_gsp("SW1A 1AA")
+
+        request = fake_open.call_args.args[0]
+        url = request.full_url
+        assert "/v1/industry/grid-supply-points/" in url
+        assert "postcode=SW1A" in url
+        assert request.method == "GET"

@@ -65,6 +65,54 @@ _OCTOPUS_API_BASE = "https://api.octopus.energy"
 # Max half-hour periods Octopus returns per page; 1500 ≈ one month of Agile data.
 _MAX_PAGE_SIZE = 1500
 
+# Valid Octopus GSP (grid supply point) region letters — I and O are never
+# used (avoids 1/0 confusion), so this is the exact set a regional tariff
+# code's trailing letter can be, e.g. "E-1R-AGILE-24-10-01-C" (London).
+REGION_LETTERS: tuple[str, ...] = (
+    "A",
+    "B",
+    "C",
+    "D",
+    "E",
+    "F",
+    "G",
+    "H",
+    "J",
+    "K",
+    "L",
+    "M",
+    "N",
+    "P",
+)
+_REGION_LETTER_SET = frozenset(REGION_LETTERS)
+
+
+# ---------------------------------------------------------------------------
+# Pure helpers (no network)
+# ---------------------------------------------------------------------------
+
+
+def build_regional_tariff_code(product_code: str, region_letter: str) -> str:
+    """Build a regional Octopus tariff code from a product code + GSP letter.
+
+    Args:
+        product_code:  Octopus product code, e.g. "AGILE-24-10-01".
+        region_letter: Single-letter GSP region code, e.g. "C" (London).
+
+    Returns:
+        The regional tariff code, e.g. "E-1R-AGILE-24-10-01-C".
+
+    Raises:
+        ValueError: If ``region_letter`` isn't one of the 14 valid GSP
+            letters. This is what stops a malformed code ever reaching the
+            API and 404ing — never build a tariff code from unvalidated input.
+    """
+    if region_letter not in _REGION_LETTER_SET:
+        raise ValueError(
+            f"invalid GSP region letter {region_letter!r}; must be one of {REGION_LETTERS}"
+        )
+    return f"E-1R-{product_code}-{region_letter}"
+
 
 # ---------------------------------------------------------------------------
 # Protocol (interface)
@@ -91,6 +139,20 @@ class OctopusClientProtocol(Protocol):
 
         Raises:
             OctopusApiError: If the API returns a non-2xx response.
+        """
+        ...
+
+    def lookup_gsp(self, postcode: str) -> str | None:
+        """Resolve a UK postcode to its Octopus GSP region letter.
+
+        Args:
+            postcode: A UK postcode (any casing/spacing).
+
+        Returns:
+            The single-letter GSP region code (e.g. "C" for London), or
+            ``None`` if the postcode has no match, an ambiguous match, or
+            the lookup otherwise fails — callers fall back to manual region
+            selection. Never raises.
         """
         ...
 
@@ -179,6 +241,61 @@ class HttpOctopusClient:
         points = self._parse_results(body)
         logger.info("Fetched Octopus prices", extra={"count": len(points)})
         return points
+
+    def lookup_gsp(self, postcode: str) -> str | None:
+        """Resolve ``postcode`` to a GSP region letter via the public industry API.
+
+        Never raises — any failure (network error, non-2xx, no match,
+        ambiguous match, malformed/unrecognised ``group_id``) is treated as
+        "couldn't resolve" so onboarding can fall back to manual selection.
+
+        Args:
+            postcode: A UK postcode (any casing/spacing).
+
+        Returns:
+            The single-letter GSP region code, or ``None``.
+        """
+        query = urllib.parse.urlencode({"postcode": postcode})
+        url = f"{_OCTOPUS_API_BASE}/v1/industry/grid-supply-points/?{query}"
+        req = urllib.request.Request(url, method="GET")
+
+        try:
+            with urllib.request.urlopen(req) as resp:  # noqa: S310 (url built from our config)
+                body: dict[str, Any] = json.loads(resp.read())
+        except (urllib.error.URLError, json.JSONDecodeError) as exc:
+            logger.warning("GSP lookup failed", extra={"postcode": postcode, "error": str(exc)})
+            return None
+
+        results = body.get("results")
+        if not isinstance(results, list) or len(results) != 1:
+            logger.warning(
+                "GSP lookup returned no/ambiguous match",
+                extra={
+                    "postcode": postcode,
+                    "match_count": len(results) if isinstance(results, list) else None,
+                },
+            )
+            return None
+
+        first = results[0]
+        group_id = first.get("group_id") if isinstance(first, dict) else None
+        if not isinstance(group_id, str) or not group_id.startswith("_"):
+            logger.warning(
+                "GSP lookup returned malformed group_id",
+                extra={"postcode": postcode, "group_id": group_id},
+            )
+            return None
+
+        letter = group_id.removeprefix("_")
+        if letter not in _REGION_LETTER_SET:
+            logger.warning(
+                "GSP lookup returned unrecognised region letter",
+                extra={"postcode": postcode, "letter": letter},
+            )
+            return None
+
+        logger.info("GSP lookup resolved", extra={"postcode": postcode, "region": letter})
+        return letter
 
     # ------------------------------------------------------------------
     # Private helpers
