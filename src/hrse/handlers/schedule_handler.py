@@ -47,7 +47,13 @@ from zoneinfo import ZoneInfo
 
 from aws_lambda_powertools import Logger, Tracer
 
-from hrse.clients.octopus import OctopusClientProtocol, get_octopus_client
+from hrse.clients.octopus import (
+    OctopusApiError,
+    OctopusClientProtocol,
+    build_octopus_client,
+    build_regional_tariff_code,
+    get_octopus_client,
+)
 from hrse.clients.weather import WeatherClientProtocol, get_weather_client
 from hrse.config import get_settings
 from hrse.models.chat_settings import ChatSettings
@@ -61,8 +67,11 @@ from hrse.store.s3_store import get_event_store
 from hrse.telegram.client import TelegramClientProtocol, get_telegram_client
 
 if TYPE_CHECKING:
+    from collections.abc import Callable
+
     from aws_lambda_powertools.utilities.typing import LambdaContext
 
+    from hrse.models.pricing import PricePoint
     from hrse.models.recommendation import Recommendation
     from hrse.store.protocol import EventStore
 
@@ -80,6 +89,7 @@ def handler(
     context: LambdaContext,
     *,
     _octopus: OctopusClientProtocol | None = None,
+    _octopus_client_for_region: Callable[[str], OctopusClientProtocol] | None = None,
     _weather: WeatherClientProtocol | None = None,
     _store: EventStore | None = None,
     _settings_store: ChatSettingsStore | None = None,
@@ -92,7 +102,14 @@ def handler(
     Args:
         event:           EventBridge invocation payload.
         context:         Lambda runtime context.
-        _octopus:        Injected Octopus client (tests only).
+        _octopus:        Injected Octopus client (tests only). Used for the
+                         top-level summary fetch, and as the price source
+                         for any chat with no ``octopus_region_code`` set
+                         (pre-Sprint-B / test-injected chats).
+        _octopus_client_for_region: Injected per-region client factory
+                         (tests only). Used instead of the real
+                         ``build_octopus_client``/``build_regional_tariff_code``
+                         path for chats that do have a region set.
         _weather:        Injected weather client (tests only).
         _store:          Injected event store (tests only).
         _settings_store: Injected chat settings store (tests only).
@@ -109,6 +126,11 @@ def handler(
 
     # Resolve dependencies — use injected stubs in tests, real factories in prod.
     octopus = _octopus if _octopus is not None else get_octopus_client()
+    octopus_client_for_region = (
+        _octopus_client_for_region
+        if _octopus_client_for_region is not None
+        else _real_octopus_client_for_region
+    )
     weather = _weather if _weather is not None else get_weather_client()
     store = _store if _store is not None else get_event_store()
     settings_store = _settings_store if _settings_store is not None else get_chat_settings_store()
@@ -184,10 +206,31 @@ def handler(
     # per enabled task, honouring each task's own per-chat TaskProfile
     # (Sprint 5D) where one has been configured. Chats with no stored
     # settings default to ["laundry"], matching pre-5C behaviour exactly.
+    # Sprint B: per-region grouped price fetch. A chat with an
+    # octopus_region_code gets that region's prices — fetched at most once
+    # per region and cached here, never per chat. A chat with no region set
+    # (pre-Sprint-B / test-injected chats) falls back to the single global
+    # `prices` fetched above, matching pre-Sprint-B behaviour exactly.
+    region_prices_cache: dict[str, list[PricePoint] | None] = {}
+
     for chat_id in chat_ids:
         chat_settings = _safe_get_chat_settings(settings_store, chat_id)
         profiles = chat_settings.profiles if chat_settings is not None else {}
         enabled_tasks = chat_settings.enabled_tasks if chat_settings is not None else ["laundry"]
+
+        chat_prices = _prices_for_chat(
+            chat_settings,
+            prices,
+            day_start,
+            day_end,
+            octopus_client_for_region,
+            region_prices_cache,
+        )
+        if chat_prices is None:
+            logger.warning(
+                "Skipping chat; its region's price fetch failed", extra={"chat_id": chat_id}
+            )
+            continue
 
         chat_recommendations: list[Recommendation] = []
         for task_name in enabled_tasks:
@@ -200,7 +243,7 @@ def handler(
             task_config = build_task_config(task_name, profiles.get(task_name), global_settings)
             chat_recommendations.append(
                 DecisionService().evaluate(
-                    summary=summary, prices=prices, forecast=forecast, config=task_config
+                    summary=summary, prices=chat_prices, forecast=forecast, config=task_config
                 )
             )
 
@@ -218,7 +261,7 @@ def handler(
         # plan/reminder message) since Telegram can't mix parse modes within
         # one message. Sent first so mock/test assertions against "the last
         # call" keep referring to the plan message, matching pre-chart tests.
-        if prices:
+        if chat_prices:
             chart_settings = (
                 chat_settings
                 if chat_settings is not None
@@ -233,7 +276,7 @@ def handler(
                 },
             )
             chart_text = render_price_bar_chart(
-                prices, chart_settings, for_tomorrow=kind == NotificationKind.PLANNING
+                chat_prices, chart_settings, for_tomorrow=kind == NotificationKind.PLANNING
             )
             telegram.send_message(chat_id=chat_id, text=chart_text, parse_mode="MarkdownV2")
 
@@ -251,6 +294,70 @@ def handler(
             }
         ),
     }
+
+
+def _real_octopus_client_for_region(region_letter: str) -> OctopusClientProtocol:
+    """Build a regional Octopus client from Settings' global product code.
+
+    The real (non-test) per-region client factory: combines the global
+    ``HRSE_OCTOPUS_PRODUCT_CODE`` with ``region_letter`` into a tariff code,
+    then builds a fresh client for it. ``build_regional_tariff_code``'s
+    ``ValueError`` on an invalid letter propagates to the caller, which
+    treats it the same as any other regional fetch failure.
+    """
+    tariff_code = build_regional_tariff_code(get_settings().octopus_product_code, region_letter)
+    return build_octopus_client(tariff_code)
+
+
+def _fetch_region_prices(
+    region_letter: str,
+    day_start: datetime,
+    day_end: datetime,
+    client_factory: Callable[[str], OctopusClientProtocol],
+) -> list[PricePoint] | None:
+    """Fetch prices for one GSP region; returns None (logged) on any failure.
+
+    One bad region — an invalid letter, a 404 on the assembled tariff code,
+    or any other Octopus API error — must not abort the whole job. The
+    caller skips that region's chats for this run and continues with the
+    rest.
+    """
+    try:
+        client = client_factory(region_letter)
+        return client.get_prices(day_start, day_end)
+    except (ValueError, OctopusApiError) as exc:
+        logger.warning(
+            "Failed to fetch prices for region; skipping its chats",
+            extra={"region": region_letter, "error": str(exc)},
+        )
+        return None
+
+
+def _prices_for_chat(
+    chat_settings: ChatSettings | None,
+    global_prices: list[PricePoint],
+    day_start: datetime,
+    day_end: datetime,
+    client_factory: Callable[[str], OctopusClientProtocol],
+    region_prices_cache: dict[str, list[PricePoint] | None],
+) -> list[PricePoint] | None:
+    """Resolve the prices to use for one chat's recommendations.
+
+    Chats without a region (pre-Sprint-B / test-injected chats) use the
+    single global fetch. Chats with a region get that region's prices,
+    fetched once per region and cached across the whole invocation — never
+    per chat. Returns None if that region's fetch failed (already logged),
+    so the caller skips the chat for this run rather than sending a
+    recommendation built from another region's prices.
+    """
+    region = chat_settings.octopus_region_code if chat_settings is not None else None
+    if region is None:
+        return global_prices
+    if region not in region_prices_cache:
+        region_prices_cache[region] = _fetch_region_prices(
+            region, day_start, day_end, client_factory
+        )
+    return region_prices_cache[region]
 
 
 def _recipient_chat_ids(settings_store: ChatSettingsStore) -> list[int]:

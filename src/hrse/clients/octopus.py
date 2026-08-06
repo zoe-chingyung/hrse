@@ -353,3 +353,25 @@ def get_octopus_client() -> HttpOctopusClient:
         product_code=settings.octopus_product_code,
         tariff_code=settings.octopus_tariff_code,
     )
+
+
+def build_octopus_client(tariff_code: str) -> HttpOctopusClient:
+    """Build a fresh ``HttpOctopusClient`` for a specific regional tariff code.
+
+    Unlike ``get_octopus_client()`` (an ``lru_cache``d singleton for the one
+    global tariff), this always constructs a new client — used by the daily
+    job's per-region grouped price fetch (Sprint B), where each GSP region a
+    recipient chat belongs to needs its own tariff code. Not cached itself;
+    callers are expected to fetch at most once per region per invocation.
+
+    Args:
+        tariff_code: Regional tariff code, e.g. "E-1R-AGILE-24-10-01-C".
+
+    Returns:
+        A new ``HttpOctopusClient`` using the global product code from
+        ``Settings`` and the given regional ``tariff_code``.
+    """
+    from hrse.config import get_settings
+
+    settings = get_settings()
+    return HttpOctopusClient(product_code=settings.octopus_product_code, tariff_code=tariff_code)

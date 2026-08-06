@@ -35,6 +35,32 @@ class _StubOctopus:
         return list(self._prices)
 
 
+class _RegionOctopusFactory:
+    """Callable ``_octopus_client_for_region`` stub — records every call.
+
+    Returns a ``_StubOctopus`` for ``prices_by_region[region_letter]``, or
+    raises ``OctopusApiError`` for any region listed in ``failing_regions``
+    (simulating a bad tariff code / API error for that region only).
+    """
+
+    def __init__(
+        self,
+        prices_by_region: dict[str, list[PricePoint]],
+        failing_regions: frozenset[str] = frozenset(),
+    ) -> None:
+        self._prices_by_region = prices_by_region
+        self._failing_regions = failing_regions
+        self.calls: list[str] = []
+
+    def __call__(self, region_letter: str) -> _StubOctopus:
+        self.calls.append(region_letter)
+        if region_letter in self._failing_regions:
+            from hrse.clients.octopus import OctopusApiError
+
+            raise OctopusApiError(404, "unknown tariff code")
+        return _StubOctopus(self._prices_by_region.get(region_letter, []))
+
+
 class _StubWeather:
     """Returns a fixed forecast for any date."""
 
@@ -595,3 +621,259 @@ class TestOnboardingCompleteFilter:
             call.kwargs["chat_id"] for call in mock_telegram.send_message.call_args_list
         }
         assert notified_chat_ids == {111}
+
+
+# ---------------------------------------------------------------------------
+# Sprint B — per-region grouped price fetch
+# ---------------------------------------------------------------------------
+
+
+def _expensive_prices(target: date) -> list[PricePoint]:
+    """Four contiguous afternoon slots priced well above the default budget."""
+    base = datetime(target.year, target.month, target.day, 13, 0, tzinfo=UTC)
+    return [PricePoint(timestamp=base + i * _SLOT, price_pence=60.0) for i in range(4)]
+
+
+@pytest.mark.unit()
+class TestPerRegionPriceFetch:
+    def test_one_fetch_per_distinct_region_not_per_chat(self) -> None:
+        # Three chats, two of them sharing region "C" — must be exactly one
+        # factory call for "C" and one for "H", never three.
+        tomorrow = (datetime.now(tz=UTC) + timedelta(days=1)).date()
+        store = _StubSettingsStore(
+            {
+                111: ChatSettings(
+                    chat_id=111,
+                    onboarding_complete=True,
+                    octopus_region_code="C",
+                    updated_at=datetime.now(tz=UTC),
+                ),
+                222: ChatSettings(
+                    chat_id=222,
+                    onboarding_complete=True,
+                    octopus_region_code="C",
+                    updated_at=datetime.now(tz=UTC),
+                ),
+                333: ChatSettings(
+                    chat_id=333,
+                    onboarding_complete=True,
+                    octopus_region_code="H",
+                    updated_at=datetime.now(tz=UTC),
+                ),
+            }
+        )
+        factory = _RegionOctopusFactory(
+            {"C": _cheap_prices(tomorrow), "H": _cheap_prices(tomorrow)}
+        )
+        mock_telegram = MagicMock(spec=TelegramClientProtocol)
+        response = handler(
+            event={"source": "hrse.scheduler", "detail-type": "DailyPlanning", "detail": {}},
+            context=MagicMock(),
+            _octopus=_StubOctopus(_cheap_prices(tomorrow)),
+            _octopus_client_for_region=factory,
+            _weather=_StubWeather(_good_forecast(tomorrow)),
+            _store=_StubStore(),
+            _settings_store=store,
+            _telegram=mock_telegram,
+        )
+        assert response["statusCode"] == 200
+        assert sorted(factory.calls) == ["C", "H"]
+        notified_chat_ids = {
+            call.kwargs["chat_id"] for call in mock_telegram.send_message.call_args_list
+        }
+        assert notified_chat_ids == {111, 222, 333}
+
+    def test_each_chat_gets_its_own_regions_recommendation(self) -> None:
+        # Region "C" is cheap (recommended); region "H" is expensive (not
+        # recommended) — the two chats' messages must reflect their own
+        # region's prices, not each other's.
+        tomorrow = (datetime.now(tz=UTC) + timedelta(days=1)).date()
+        store = _StubSettingsStore(
+            {
+                111: ChatSettings(
+                    chat_id=111,
+                    onboarding_complete=True,
+                    octopus_region_code="C",
+                    updated_at=datetime.now(tz=UTC),
+                ),
+                222: ChatSettings(
+                    chat_id=222,
+                    onboarding_complete=True,
+                    octopus_region_code="H",
+                    updated_at=datetime.now(tz=UTC),
+                ),
+            }
+        )
+        factory = _RegionOctopusFactory(
+            {"C": _cheap_prices(tomorrow), "H": _expensive_prices(tomorrow)}
+        )
+        mock_telegram = MagicMock(spec=TelegramClientProtocol)
+        handler(
+            event={"source": "hrse.scheduler", "detail-type": "DailyPlanning", "detail": {}},
+            context=MagicMock(),
+            _octopus=_StubOctopus(_cheap_prices(tomorrow)),
+            _octopus_client_for_region=factory,
+            _weather=_StubWeather(_good_forecast(tomorrow)),
+            _store=_StubStore(),
+            _settings_store=store,
+            _telegram=mock_telegram,
+        )
+
+        plan_messages = {
+            call.kwargs["chat_id"]: call.kwargs["text"]
+            for call in mock_telegram.send_message.call_args_list
+            if "parse_mode" not in call.kwargs
+        }
+        assert "not recommended" not in plan_messages[111].lower()
+        assert "not recommended" in plan_messages[222].lower()
+
+    def test_chat_with_no_region_falls_back_to_global_fetch(self) -> None:
+        tomorrow = (datetime.now(tz=UTC) + timedelta(days=1)).date()
+        store = _StubSettingsStore(
+            {
+                111: ChatSettings(
+                    chat_id=111, onboarding_complete=True, updated_at=datetime.now(tz=UTC)
+                )
+            }
+        )
+        factory = _RegionOctopusFactory({})
+        mock_telegram = MagicMock(spec=TelegramClientProtocol)
+        response = handler(
+            event={"source": "hrse.scheduler", "detail-type": "DailyPlanning", "detail": {}},
+            context=MagicMock(),
+            _octopus=_StubOctopus(_cheap_prices(tomorrow)),
+            _octopus_client_for_region=factory,
+            _weather=_StubWeather(_good_forecast(tomorrow)),
+            _store=_StubStore(),
+            _settings_store=store,
+            _telegram=mock_telegram,
+        )
+        assert response["statusCode"] == 200
+        assert factory.calls == []  # global fetch used, never the regional factory
+        notified_chat_ids = {
+            call.kwargs["chat_id"] for call in mock_telegram.send_message.call_args_list
+        }
+        assert notified_chat_ids == {111}
+
+    def test_one_failed_region_does_not_block_other_regions(self) -> None:
+        tomorrow = (datetime.now(tz=UTC) + timedelta(days=1)).date()
+        store = _StubSettingsStore(
+            {
+                111: ChatSettings(
+                    chat_id=111,
+                    onboarding_complete=True,
+                    octopus_region_code="C",
+                    updated_at=datetime.now(tz=UTC),
+                ),
+                222: ChatSettings(
+                    chat_id=222,
+                    onboarding_complete=True,
+                    octopus_region_code="ZZ",
+                    updated_at=datetime.now(tz=UTC),
+                ),
+            }
+        )
+        factory = _RegionOctopusFactory(
+            {"C": _cheap_prices(tomorrow)}, failing_regions=frozenset({"ZZ"})
+        )
+        mock_telegram = MagicMock(spec=TelegramClientProtocol)
+        response = handler(
+            event={"source": "hrse.scheduler", "detail-type": "DailyPlanning", "detail": {}},
+            context=MagicMock(),
+            _octopus=_StubOctopus(_cheap_prices(tomorrow)),
+            _octopus_client_for_region=factory,
+            _weather=_StubWeather(_good_forecast(tomorrow)),
+            _store=_StubStore(),
+            _settings_store=store,
+            _telegram=mock_telegram,
+        )
+        assert response["statusCode"] == 200
+        notified_chat_ids = {
+            call.kwargs["chat_id"] for call in mock_telegram.send_message.call_args_list
+        }
+        assert notified_chat_ids == {111}  # 222's region failed; skipped, not crashed
+
+    def test_failed_region_is_only_fetched_once_even_with_multiple_chats(self) -> None:
+        tomorrow = (datetime.now(tz=UTC) + timedelta(days=1)).date()
+        store = _StubSettingsStore(
+            {
+                111: ChatSettings(
+                    chat_id=111,
+                    onboarding_complete=True,
+                    octopus_region_code="ZZ",
+                    updated_at=datetime.now(tz=UTC),
+                ),
+                222: ChatSettings(
+                    chat_id=222,
+                    onboarding_complete=True,
+                    octopus_region_code="ZZ",
+                    updated_at=datetime.now(tz=UTC),
+                ),
+            }
+        )
+        factory = _RegionOctopusFactory({}, failing_regions=frozenset({"ZZ"}))
+        mock_telegram = MagicMock(spec=TelegramClientProtocol)
+        handler(
+            event={"source": "hrse.scheduler", "detail-type": "DailyPlanning", "detail": {}},
+            context=MagicMock(),
+            _octopus=_StubOctopus(_cheap_prices(tomorrow)),
+            _octopus_client_for_region=factory,
+            _weather=_StubWeather(_good_forecast(tomorrow)),
+            _store=_StubStore(),
+            _settings_store=store,
+            _telegram=mock_telegram,
+        )
+        assert factory.calls == ["ZZ"]  # cached after the first failure — not retried per chat
+        mock_telegram.send_message.assert_not_called()
+
+    def test_real_region_client_factory_is_wired_when_not_injected(self, mocker: Any) -> None:
+        # No _octopus_client_for_region injected: proves the handler's default
+        # (_real_octopus_client_for_region -> build_regional_tariff_code +
+        # build_octopus_client) is actually reachable end to end.
+        import io
+        import json as jsonlib
+
+        tomorrow = (datetime.now(tz=UTC) + timedelta(days=1)).date()
+        store = _StubSettingsStore(
+            {
+                111: ChatSettings(
+                    chat_id=111,
+                    onboarding_complete=True,
+                    octopus_region_code="C",
+                    updated_at=datetime.now(tz=UTC),
+                )
+            }
+        )
+
+        class _FakeResp(io.BytesIO):
+            def __enter__(self) -> _FakeResp:
+                return self
+
+            def __exit__(self, *args: object) -> None:
+                self.close()
+
+        payload = {
+            "results": [
+                {
+                    "value_inc_vat": 7.0,
+                    "valid_from": f"{tomorrow.isoformat()}T13:00:00Z",
+                    "valid_to": f"{tomorrow.isoformat()}T13:30:00Z",
+                }
+            ]
+        }
+        mocker.patch(
+            "urllib.request.urlopen", return_value=_FakeResp(jsonlib.dumps(payload).encode())
+        )
+
+        mock_telegram = MagicMock(spec=TelegramClientProtocol)
+        response = handler(
+            event={"source": "hrse.scheduler", "detail-type": "DailyPlanning", "detail": {}},
+            context=MagicMock(),
+            _octopus=_StubOctopus(_cheap_prices(tomorrow)),
+            _weather=_StubWeather(_good_forecast(tomorrow)),
+            _store=_StubStore(),
+            _settings_store=store,
+            _telegram=mock_telegram,
+        )
+        assert response["statusCode"] == 200
+        mock_telegram.send_message.assert_called()

@@ -20,6 +20,7 @@ from hrse.clients.octopus import (
     HttpOctopusClient,
     OctopusApiError,
     OctopusClientProtocol,
+    build_octopus_client,
     build_regional_tariff_code,
     get_octopus_client,
 )
@@ -194,6 +195,24 @@ class TestFactory:
         client = get_octopus_client()
         assert isinstance(client, HttpOctopusClient)
         get_octopus_client.cache_clear()
+
+
+@pytest.mark.unit()
+class TestBuildOctopusClient:
+    def test_builds_client_with_given_tariff_code(self) -> None:
+        client = build_octopus_client("E-1R-AGILE-24-10-01-C")
+        assert isinstance(client, HttpOctopusClient)
+        assert client._tariff_code == "E-1R-AGILE-24-10-01-C"  # noqa: SLF001
+
+    def test_uses_global_product_code_from_settings(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setenv("HRSE_OCTOPUS_PRODUCT_CODE", "AGILE-25-01-01")
+        client = build_octopus_client("E-1R-AGILE-25-01-01-H")
+        assert client._product_code == "AGILE-25-01-01"  # noqa: SLF001
+
+    def test_returns_a_new_instance_each_call(self) -> None:
+        first = build_octopus_client("E-1R-AGILE-24-10-01-C")
+        second = build_octopus_client("E-1R-AGILE-24-10-01-C")
+        assert first is not second
 
 
 # ---------------------------------------------------------------------------
