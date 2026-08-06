@@ -219,6 +219,14 @@ def handler(
                 if chat_settings is not None
                 else ChatSettings(chat_id=chat_id, updated_at=now)
             )
+            logger.info(
+                "Rendering price bar chart",
+                extra={
+                    "chat_id": chat_id,
+                    "language": chart_settings.language,
+                    "settings_loaded_from_store": chat_settings is not None,
+                },
+            )
             chart_text = render_price_bar_chart(
                 prices, chart_settings, for_tomorrow=kind == NotificationKind.PLANNING
             )

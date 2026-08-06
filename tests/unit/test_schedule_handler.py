@@ -15,7 +15,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from hrse.handlers.schedule_handler import handler
-from hrse.models.chat_settings import ChatSettings, TaskProfile
+from hrse.models.chat_settings import ChatSettings, Language, TaskProfile
 from hrse.models.pricing import PricePoint
 from hrse.models.weather import DailyForecast
 from hrse.telegram.client import TelegramClientProtocol
@@ -241,6 +241,26 @@ class TestPriceBarChart:
         )
         assert response["statusCode"] == 200
         mock_telegram.send_message.assert_called_once()  # plan message only, no chart
+
+    def test_chart_uses_stored_chat_language(self) -> None:
+        # Regression test: a chat that persisted language=ZH must get a ZH
+        # chart, proving the stored value (not a defaulted EN ChatSettings)
+        # flows through to the renderer.
+        settings_store = _StubSettingsStore(
+            {
+                123456789: ChatSettings(
+                    chat_id=123456789, language=Language.ZH, updated_at=datetime.now(tz=UTC)
+                )
+            }
+        )
+        _, mock_telegram = _invoke("DailyPlanning", settings_store=settings_store)
+        chart_text = mock_telegram.send_message.call_args_list[0].kwargs["text"]
+        assert "聽日電價走勢" in chart_text
+
+    def test_chart_defaults_to_english_when_no_settings_stored(self) -> None:
+        _, mock_telegram = _invoke("DailyPlanning", settings_store=_StubSettingsStore())
+        chart_text = mock_telegram.send_message.call_args_list[0].kwargs["text"]
+        assert "Tomorrow's prices" in chart_text
 
 
 @pytest.mark.unit()

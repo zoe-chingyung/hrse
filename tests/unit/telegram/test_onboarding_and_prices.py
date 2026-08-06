@@ -8,7 +8,7 @@ from unittest.mock import MagicMock
 from zoneinfo import ZoneInfo
 
 from hrse.clients.octopus import OctopusApiError
-from hrse.models.chat_settings import Language
+from hrse.models.chat_settings import ChatSettings, Language
 from hrse.models.pricing import PricePoint
 from hrse.models.telegram import (
     TelegramCallbackQuery,
@@ -145,6 +145,21 @@ class TestHandleLanguageCallback:
 
         client.answer_callback_query.assert_called_once()
         client.edit_message_text.assert_not_called()
+
+    def test_selecting_zh_survives_a_store_reload(self) -> None:
+        # Regression test: proves the ZH choice made via the language picker
+        # is what a later `store.get()` (e.g. from the schedule handler)
+        # actually reads back — not silently reset to the English default.
+        # Round-trips through JSON to mirror what S3ChatSettingsStore does.
+        client = _mock_client()
+        store = InMemoryChatSettingsStore()
+
+        handle_language_callback(query=_callback("lang:zh"), client=client, settings_store=store)
+
+        saved = store.get(-100123)
+        assert saved is not None
+        reloaded = ChatSettings.model_validate_json(saved.model_dump_json())
+        assert reloaded.language is Language.ZH
 
 
 # ---------------------------------------------------------------------------
