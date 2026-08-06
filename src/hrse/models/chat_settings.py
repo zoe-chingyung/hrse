@@ -150,6 +150,12 @@ class ChatSettings(BaseModel):
         le=48,
         description="Max number of slots shown in the price bar chart notification",
     )
+    chart_expensive_slot_limit: int = Field(
+        default=8,
+        ge=1,
+        le=48,
+        description="Max number of most-expensive slots shown in the avoid-list section of the price bar chart notification",
+    )
     updated_at: datetime = Field(..., description="UTC timestamp of last update")
 
     @model_validator(mode="after")

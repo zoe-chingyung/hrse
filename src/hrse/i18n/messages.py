@@ -62,6 +62,7 @@ class MessageKey(StrEnum):
     PRICE_BAR_CHART_TITLE = auto()
     PRICE_BAR_CHART_TITLE_TOMORROW = auto()
     PRICE_BAR_CHART_FOOTER = auto()
+    PRICE_BAR_CHART_AVOID_HEADER = auto()
 
 
 _COMMANDS_EN = (
@@ -322,6 +323,10 @@ _CATALOGUE: dict[MessageKey, dict[Language, str]] = {
     MessageKey.PRICE_BAR_CHART_FOOTER: {
         Language.EN: "✅ Best wash time: from {time}",
         Language.ZH: "✅ 最抵洗衫時間:由 {time} 開始",
+    },
+    MessageKey.PRICE_BAR_CHART_AVOID_HEADER: {
+        Language.EN: "⚠️ Avoid heavy use (priciest slots):",
+        Language.ZH: "⚠️ 避免大量用電(最貴時段):",
     },
 }
 

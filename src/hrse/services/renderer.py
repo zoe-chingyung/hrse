@@ -16,6 +16,10 @@ Design
 * When there are more slots than the configured limit, only the cheapest
   ``chart_slot_limit`` are shown — that's the subset actually relevant to a
   "when should I run this" decision, and keeps the message short on a phone.
+* An optional "avoid heavy use" section lists the ``chart_expensive_slot_limit``
+  priciest slots (most-expensive first), so a chat also sees when *not* to
+  run something. Any slot already shown in the cheap section is dropped from
+  this list rather than shown twice.
 * The whole message is wrapped in a MarkdownV2 code block so Telegram
   renders it monospace and the bar/price columns stay aligned.
 """
@@ -42,6 +46,8 @@ _CHECK = "✅"  # ✅
 # Octopus Agile is UK-only, so this mirrors Settings.display_timezone's
 # default — used only when a chat hasn't picked its own timezone.
 _DEFAULT_DISPLAY_TZ = "Europe/London"
+_TELEGRAM_MAX_MESSAGE_LENGTH = 4096
+_TRUNCATION_MARKER = "…"
 
 
 def render_price_bar_chart(
@@ -83,14 +89,37 @@ def render_price_bar_chart(
         else MessageKey.PRICE_BAR_CHART_TITLE
     )
 
-    lines = [
+    base_lines = [
         t(title_key, lang),
         "",
         *[_row(slot, display_tz, green, red, max_price) for slot in shown],
         "",
         t(MessageKey.PRICE_BAR_CHART_FOOTER, lang, time=cheapest_time),
     ]
-    return "```\n" + "\n".join(lines) + "\n```"
+
+    shown_timestamps = {slot.timestamp for slot in shown}
+    avoid = sorted(prices, key=lambda slot: slot.price_pence, reverse=True)[
+        : settings.chart_expensive_slot_limit
+    ]
+    avoid = [slot for slot in avoid if slot.timestamp not in shown_timestamps]
+
+    def _render(avoid_rows: list[PriceSlot], truncated: bool) -> str:
+        lines = list(base_lines)
+        if avoid_rows or truncated:
+            lines.append("")
+            lines.append(t(MessageKey.PRICE_BAR_CHART_AVOID_HEADER, lang))
+            lines.extend(_row(slot, display_tz, green, red, max_price) for slot in avoid_rows)
+            if truncated:
+                lines.append(_TRUNCATION_MARKER)
+        return "```\n" + "\n".join(lines) + "\n```"
+
+    text = _render(avoid, truncated=False)
+    truncated = False
+    while len(text) > _TELEGRAM_MAX_MESSAGE_LENGTH and avoid:
+        avoid = avoid[:-1]
+        truncated = True
+        text = _render(avoid, truncated=truncated)
+    return text
 
 
 def _tier(price: float, green: float, red: float) -> str:

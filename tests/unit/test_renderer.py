@@ -11,6 +11,7 @@ import pytest
 
 from hrse.models.chat_settings import ChatSettings, Language
 from hrse.models.pricing import PriceSlot
+from hrse.services import renderer as renderer_module
 from hrse.services.renderer import render_price_bar_chart
 
 _NOW = datetime(2026, 7, 12, tzinfo=UTC)
@@ -37,11 +38,30 @@ def _body(text: str) -> str:
 
 
 def _rows(text: str) -> list[str]:
-    """Return just the per-slot bar rows (between the title and footer blanks)."""
+    """Return just the cheap-section bar rows (between the title and footer blanks).
+
+    Uses the first two blank lines specifically (not the last) since an
+    optional avoid-list section — with its own leading blank line — may
+    follow the footer.
+    """
     lines = _body(text).splitlines()
     blank_indices = [i for i, line in enumerate(lines) if line == ""]
-    start, end = blank_indices[0] + 1, blank_indices[-1]
+    start, end = blank_indices[0] + 1, blank_indices[1]
     return lines[start:end]
+
+
+def _avoid_section(text: str) -> list[str]:
+    """Return the avoid-list price rows (after the ⚠️ header), or [] if absent.
+
+    Excludes a trailing "…" truncation-marker line, if present, so callers
+    get just the actual rows.
+    """
+    lines = _body(text).splitlines()
+    for i, line in enumerate(lines):
+        if line.startswith("⚠️"):  # ⚠️
+            rows = lines[i + 1 :]
+            return [row for row in rows if row != "…"]
+    return []
 
 
 class TestSortOrder:
@@ -203,3 +223,64 @@ class TestGuards:
     def test_empty_prices_raises(self) -> None:
         with pytest.raises(ValueError, match="at least one"):
             render_price_bar_chart([], _settings())
+
+
+class TestAvoidList:
+    def test_avoid_list_present_for_expensive_slots(self) -> None:
+        slots = _slots([float(i) for i in range(1, 21)])  # 20 half-hour slots
+        text = render_price_bar_chart(slots, _settings())
+        assert "Avoid heavy use" in text
+
+    def test_avoid_list_default_count_matches_default_limit(self) -> None:
+        slots = _slots([float(i) for i in range(1, 21)])  # no overlap with cheap section
+        text = render_price_bar_chart(slots, _settings())
+        assert len(_avoid_section(text)) == 8  # ChatSettings default chart_expensive_slot_limit
+
+    def test_avoid_list_custom_limit_is_respected(self) -> None:
+        slots = _slots([float(i) for i in range(1, 21)])
+        settings = _settings(chart_expensive_slot_limit=3)
+        text = render_price_bar_chart(slots, settings)
+        assert len(_avoid_section(text)) == 3
+
+    def test_avoid_list_is_most_expensive_first(self) -> None:
+        slots = _slots([float(i) for i in range(1, 21)])
+        text = render_price_bar_chart(slots, _settings())
+        prices = [float(row.split("p")[0].split()[-1]) for row in _avoid_section(text)]
+        assert prices == sorted(prices, reverse=True)
+
+    def test_avoid_list_dedupes_slots_already_shown(self) -> None:
+        # 10 slots, prices 1..10. Cheap section (default limit 8) shows 1-8.
+        # The 8 most-expensive overall are 3-10; after dropping the ones
+        # already shown (3-8), only 9 and 10 should remain.
+        slots = _slots([float(i) for i in range(1, 11)])
+        text = render_price_bar_chart(slots, _settings())
+        avoid_prices = [float(row.split("p")[0].split()[-1]) for row in _avoid_section(text)]
+        assert avoid_prices == [10.0, 9.0]
+
+    def test_no_avoid_section_when_every_slot_already_shown(self) -> None:
+        slots = _slots([5.0, 6.0])
+        text = render_price_bar_chart(slots, _settings())
+        assert _avoid_section(text) == []
+        assert "Avoid heavy use" not in text
+
+    def test_avoid_rows_use_the_row_helper_tier_and_bar(self) -> None:
+        # Prices 23-30 exceed the default 20p red-tier threshold.
+        slots = _slots([float(i) for i in range(1, 31)])
+        text = render_price_bar_chart(slots, _settings())
+        assert all(row.startswith("\U0001f534") for row in _avoid_section(text))  # 🔴, all pricey
+
+    def test_message_is_truncated_rather_than_exceeding_the_length_guard(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        slots = _slots([float(i) for i in range(1, 21)])
+        settings = _settings(chart_expensive_slot_limit=8)
+        full_text = render_price_bar_chart(slots, settings)
+
+        # Cap the guard just below the untruncated length so a truncation is
+        # forced, without depending on Telegram's real 4096-char limit.
+        monkeypatch.setattr(renderer_module, "_TELEGRAM_MAX_MESSAGE_LENGTH", len(full_text) - 1)
+        text = render_price_bar_chart(slots, settings)
+
+        assert len(text) <= len(full_text) - 1
+        assert "…" in text
+        assert len(_avoid_section(text)) < 8
