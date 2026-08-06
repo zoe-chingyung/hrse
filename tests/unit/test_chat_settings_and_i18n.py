@@ -56,6 +56,15 @@ class TestChatSettings:
         assert settings.profiles == {}
         assert settings.onboarding_step is None
 
+    def test_defaults_octopus_region_code_to_none(self) -> None:
+        settings = ChatSettings(chat_id=1, updated_at=_NOW)
+        assert settings.octopus_region_code is None
+
+    def test_octopus_region_code_round_trips(self) -> None:
+        original = ChatSettings(chat_id=1, octopus_region_code="C", updated_at=_NOW)
+        restored = ChatSettings.model_validate_json(original.model_dump_json())
+        assert restored.octopus_region_code == "C"
+
     def test_json_round_trip_with_full_profile(self) -> None:
         original = ChatSettings(
             chat_id=-5,

@@ -29,6 +29,7 @@ from aws_lambda_powertools import Logger
 from hrse.models.chat_settings import Language
 from hrse.telegram.commands import (
     LANGUAGE_CALLBACK_PREFIX,
+    REGION_CALLBACK_PREFIX,
     handle_add_task,
     handle_events,
     handle_health,
@@ -38,6 +39,7 @@ from hrse.telegram.commands import (
     handle_onboarding_answer,
     handle_prices,
     handle_profile,
+    handle_region_callback,
     handle_remove_task,
     handle_reset,
     handle_setup_start,
@@ -150,6 +152,8 @@ def _route_callback_query(
 
     if data.startswith(LANGUAGE_CALLBACK_PREFIX) and settings_store is not None:
         handle_language_callback(query=query, client=client, settings_store=settings_store)
+    elif data.startswith(REGION_CALLBACK_PREFIX) and settings_store is not None:
+        handle_region_callback(query=query, client=client, settings_store=settings_store)
     else:
         logger.warning("Unhandled callback query", extra={"data": data})
         client.answer_callback_query(callback_query_id=query.id)
@@ -289,7 +293,12 @@ def _route_message(
         and settings_store is not None
     ):
         handle_onboarding_answer(
-            chat_id=chat_id, text=text, client=client, settings_store=settings_store, lang=lang
+            chat_id=chat_id,
+            text=text,
+            client=client,
+            settings_store=settings_store,
+            lang=lang,
+            octopus=octopus,
         )
 
     else:

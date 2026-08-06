@@ -206,6 +206,21 @@ class TestRouteCallbackQuery:
         route(update=_callback_update("lang:en"), client=client)
         client.answer_callback_query.assert_called_once()
 
+    @patch("hrse.telegram.router.handle_region_callback")
+    def test_region_data_dispatches_to_handler(self, mock_cb: MagicMock) -> None:
+        client = MagicMock()
+        settings_store = MagicMock()
+        update = _callback_update("region:C")
+        route(update=update, client=client, settings_store=settings_store)
+        mock_cb.assert_called_once_with(
+            query=update.callback_query, client=client, settings_store=settings_store
+        )
+
+    def test_region_data_without_settings_store_is_answered(self) -> None:
+        client = MagicMock()
+        route(update=_callback_update("region:C"), client=client)
+        client.answer_callback_query.assert_called_once()
+
 
 class TestRouteSprint6Commands:
     @patch("hrse.telegram.router.handle_language_prompt")
@@ -332,7 +347,28 @@ class TestRouteSprint5BCommands:
             client=client,
             settings_store=settings_store,
             lang=Language.EN,
+            octopus=None,
         )
+
+    @patch("hrse.telegram.router.handle_onboarding_answer")
+    def test_onboarding_answer_forwards_octopus_client(self, mock_handler: MagicMock) -> None:
+        from datetime import UTC, datetime
+
+        from hrse.models.chat_settings import ChatSettings
+        from hrse.store.chat_settings_store import InMemoryChatSettingsStore
+
+        settings_store = InMemoryChatSettingsStore()
+        settings_store.save(
+            ChatSettings(chat_id=8, onboarding_step=0, updated_at=datetime(2026, 7, 12, tzinfo=UTC))
+        )
+        octopus = MagicMock()
+        route(
+            update=_update("SW1A 1AA", chat_id=8),
+            client=MagicMock(),
+            settings_store=settings_store,
+            octopus=octopus,
+        )
+        assert mock_handler.call_args.kwargs["octopus"] is octopus
 
     @patch("hrse.telegram.router.handle_unknown")
     @patch("hrse.telegram.router.handle_onboarding_answer")

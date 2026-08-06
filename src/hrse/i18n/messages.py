@@ -65,6 +65,9 @@ class MessageKey(StrEnum):
     PRICE_BAR_CHART_AVOID_HEADER = auto()
     START_INVITE_REQUIRED = auto()
     START_ALREADY_REGISTERED = auto()
+    SETUP_Q_POSTCODE = auto()
+    SETUP_REGION_CONFIRMED = auto()
+    SETUP_REGION_LOOKUP_FAILED = auto()
 
 
 _COMMANDS_EN = (
@@ -340,6 +343,28 @@ _CATALOGUE: dict[MessageKey, dict[Language, str]] = {
     MessageKey.START_ALREADY_REGISTERED: {
         Language.EN: "✅ You're already set up. Use /reset if you want to start over.",
         Language.ZH: "✅ 你已經設定咗。想重新開始就用 /reset。",
+    },
+    MessageKey.SETUP_Q_POSTCODE: {
+        Language.EN: (
+            "🛠 <b>Setup ({step}/{total})</b>\n"
+            "What's your postcode? I'll use it to find your electricity "
+            "pricing region (e.g. <code>SW1A 1AA</code>)."
+        ),
+        Language.ZH: (
+            "🛠 <b>設定 ({step}/{total})</b>\n"
+            "你嘅郵政編號係?我會用嚟搵你嘅電價地區(例如 <code>SW1A 1AA</code>)。"
+        ),
+    },
+    MessageKey.SETUP_REGION_CONFIRMED: {
+        Language.EN: "📍 Region set to <b>{region}</b>.",
+        Language.ZH: "📍 地區已設定為 <b>{region}</b>。",
+    },
+    MessageKey.SETUP_REGION_LOOKUP_FAILED: {
+        Language.EN: (
+            "⚠️ Couldn't find that postcode. Pick your region below, or "
+            "try entering the postcode again."
+        ),
+        Language.ZH: "⚠️ 搵唔到呢個郵政編號。喺下面揀返你嘅地區,或者再輸入一次郵政編號。",
     },
 }
 

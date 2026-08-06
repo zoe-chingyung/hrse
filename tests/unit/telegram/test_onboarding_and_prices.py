@@ -20,6 +20,7 @@ from hrse.telegram.commands import (
     handle_language_callback,
     handle_language_prompt,
     handle_prices,
+    handle_region_callback,
     handle_start,
     handle_welcome,
 )
@@ -257,6 +258,127 @@ class TestHandleLanguageCallback:
         assert saved.language is Language.ZH
         assert saved.onboarding_complete is True
         assert saved.enabled_tasks == ["laundry", "dishwasher"]
+
+    def test_switching_language_preserves_octopus_region_code(self) -> None:
+        client = _mock_client()
+        store = InMemoryChatSettingsStore()
+        store.save(
+            ChatSettings(chat_id=-100123, octopus_region_code="H", updated_at=datetime.now(tz=UTC))
+        )
+
+        handle_language_callback(query=_callback("lang:zh"), client=client, settings_store=store)
+
+        saved = store.get(-100123)
+        assert saved is not None
+        assert saved.octopus_region_code == "H"
+
+
+# ---------------------------------------------------------------------------
+# handle_region_callback
+# ---------------------------------------------------------------------------
+
+
+class TestHandleRegionCallback:
+    def _onboarding_settings(self, **overrides: object) -> ChatSettings:
+        base: dict[str, object] = {
+            "chat_id": -100123,
+            "onboarding_step": 0,
+            "updated_at": datetime.now(tz=UTC),
+        }
+        base.update(overrides)
+        return ChatSettings(**base)  # type: ignore[arg-type]
+
+    def test_valid_letter_saves_region_and_advances(self) -> None:
+        client = _mock_client()
+        store = InMemoryChatSettingsStore()
+        store.save(self._onboarding_settings())
+
+        handle_region_callback(query=_callback("region:C"), client=client, settings_store=store)
+
+        saved = store.get(-100123)
+        assert saved is not None
+        assert saved.octopus_region_code == "C"
+        assert saved.onboarding_step == 1
+        client.answer_callback_query.assert_called_once_with(callback_query_id="cb-1")
+        _, kwargs = client.edit_message_text.call_args
+        assert "C" in kwargs["text"]
+
+    def test_advancing_sends_next_setup_question(self) -> None:
+        client = _mock_client()
+        store = InMemoryChatSettingsStore()
+        store.save(self._onboarding_settings())
+
+        handle_region_callback(query=_callback("region:H"), client=client, settings_store=store)
+
+        _, kwargs = client.send_message.call_args
+        assert "2/7" in kwargs["text"]
+
+    def test_unknown_letter_only_answers(self) -> None:
+        client = _mock_client()
+        store = InMemoryChatSettingsStore()
+        store.save(self._onboarding_settings())
+
+        handle_region_callback(query=_callback("region:Z"), client=client, settings_store=store)
+
+        client.answer_callback_query.assert_called_once()
+        client.edit_message_text.assert_not_called()
+        saved = store.get(-100123)
+        assert saved is not None
+        assert saved.octopus_region_code is None
+
+    def test_missing_message_only_answers(self) -> None:
+        client = _mock_client()
+        store = InMemoryChatSettingsStore()
+
+        handle_region_callback(
+            query=_callback("region:C", with_message=False), client=client, settings_store=store
+        )
+
+        client.answer_callback_query.assert_called_once()
+        client.edit_message_text.assert_not_called()
+
+    def test_no_settings_only_answers(self) -> None:
+        client = _mock_client()
+        store = InMemoryChatSettingsStore()
+
+        handle_region_callback(query=_callback("region:C"), client=client, settings_store=store)
+
+        client.answer_callback_query.assert_called_once()
+        client.edit_message_text.assert_not_called()
+        assert store.get(-100123) is None
+
+    def test_stale_press_after_onboarding_moved_past_postcode_is_ignored(self) -> None:
+        client = _mock_client()
+        store = InMemoryChatSettingsStore()
+        store.save(self._onboarding_settings(onboarding_step=3))
+
+        handle_region_callback(query=_callback("region:C"), client=client, settings_store=store)
+
+        client.answer_callback_query.assert_called_once()
+        client.edit_message_text.assert_not_called()
+        saved = store.get(-100123)
+        assert saved is not None
+        assert saved.octopus_region_code is None
+        assert saved.onboarding_step == 3
+
+    def test_preserves_existing_profiles_and_enabled_tasks(self) -> None:
+        from hrse.models.chat_settings import TaskProfile
+
+        client = _mock_client()
+        store = InMemoryChatSettingsStore()
+        store.save(
+            self._onboarding_settings(
+                profiles={"laundry": TaskProfile(target_per_week=3)},
+                enabled_tasks=["laundry", "ev"],
+            )
+        )
+
+        handle_region_callback(query=_callback("region:C"), client=client, settings_store=store)
+
+        saved = store.get(-100123)
+        assert saved is not None
+        assert saved.profiles["laundry"].target_per_week == 3
+        assert saved.enabled_tasks == ["laundry", "ev"]
 
 
 # ---------------------------------------------------------------------------

@@ -21,7 +21,7 @@ from aws_lambda_powertools import Logger
 from pydantic import ValidationError
 
 from hrse import __version__
-from hrse.clients.octopus import OctopusApiError
+from hrse.clients.octopus import REGION_LETTERS, OctopusApiError
 from hrse.i18n import (
     MessageKey,
     bilingual_already_registered,
@@ -49,6 +49,7 @@ if TYPE_CHECKING:
 logger = Logger(child=True)
 
 LANGUAGE_CALLBACK_PREFIX = "lang:"
+REGION_CALLBACK_PREFIX = "region:"
 
 
 # ---------------------------------------------------------------------------
@@ -283,6 +284,7 @@ def handle_language_callback(
             onboarding_step=existing.onboarding_step if existing is not None else None,
             enabled_tasks=existing.enabled_tasks if existing is not None else ["laundry"],
             onboarding_complete=existing.onboarding_complete if existing is not None else False,
+            octopus_region_code=existing.octopus_region_code if existing is not None else None,
             updated_at=utcnow(),
         )
     )
@@ -292,6 +294,64 @@ def handle_language_callback(
         message_id=query.message.message_id,
         text=t(MessageKey.LANGUAGE_SET, lang),
     )
+
+
+def handle_region_callback(
+    query: TelegramCallbackQuery,
+    client: TelegramClientProtocol,
+    settings_store: ChatSettingsStore,
+) -> None:
+    """Persist a manually-picked GSP region letter and resume /setup.
+
+    Fallback path for when postcode lookup fails (or no Octopus client was
+    available) — mirrors ``handle_language_callback``'s button pattern.
+    Only acts while the chat is actually waiting at the postcode step; a
+    stale button press (already resolved, or onboarding restarted since) is
+    just acknowledged.
+
+    Args:
+        query:          The CallbackQuery whose ``data`` is ``region:<letter>``.
+        client:         Client used to acknowledge and confirm.
+        settings_store: Store used to load/persist the chat's settings.
+    """
+    data = query.data or ""
+    letter = data.removeprefix(REGION_CALLBACK_PREFIX)
+    if letter not in REGION_LETTERS:
+        logger.warning("Unknown region callback", extra={"data": data})
+        client.answer_callback_query(callback_query_id=query.id)
+        return
+
+    if query.message is None:
+        logger.warning("Region callback without message", extra={"data": data})
+        client.answer_callback_query(callback_query_id=query.id)
+        return
+
+    chat_id = query.message.chat.id
+    settings = settings_store.get(chat_id)
+    if settings is None or settings.onboarding_step != _POSTCODE_STEP:
+        client.answer_callback_query(callback_query_id=query.id)
+        return
+
+    lang = settings.language
+    settings_store.save(
+        ChatSettings(
+            chat_id=chat_id,
+            language=lang,
+            profiles=settings.profiles,
+            onboarding_step=_POSTCODE_STEP + 1,
+            enabled_tasks=settings.enabled_tasks,
+            onboarding_complete=settings.onboarding_complete,
+            octopus_region_code=letter,
+            updated_at=utcnow(),
+        )
+    )
+    client.answer_callback_query(callback_query_id=query.id)
+    client.edit_message_text(
+        chat_id=chat_id,
+        message_id=query.message.message_id,
+        text=t(MessageKey.SETUP_REGION_CONFIRMED, lang, region=letter),
+    )
+    _send_setup_question(chat_id, client, lang, step=_POSTCODE_STEP + 1)
 
 
 def handle_prices(
@@ -405,6 +465,13 @@ _SETUP_STEPS: tuple[tuple[str, MessageKey, Callable[[str], object]], ...] = (
 
 _SETUP_TASK_KEY = "laundry"
 
+# Step 0 asks for postcode/region (Sprint B) — a ChatSettings-level field,
+# not a TaskProfile one — so it's handled separately from _SETUP_STEPS
+# below and doesn't appear in that table. Steps 1..len(_SETUP_STEPS) map to
+# _SETUP_STEPS[step - 1]. Total question count includes the postcode step.
+_POSTCODE_STEP = 0
+_TOTAL_SETUP_QUESTIONS = len(_SETUP_STEPS) + 1
+
 
 def handle_setup_start(
     chat_id: int,
@@ -414,9 +481,11 @@ def handle_setup_start(
 ) -> None:
     """Start (or restart) the /setup onboarding conversation.
 
-    Resets this chat's laundry profile to fresh defaults and asks question 0;
-    "restart" means starting over, not resuming a half-finished attempt.
-    Other tasks' profiles and this chat's enabled tasks are preserved.
+    Resets this chat's laundry profile to fresh defaults and asks question 0
+    (postcode/region); "restart" means starting over, not resuming a
+    half-finished attempt. Other tasks' profiles, this chat's enabled tasks,
+    and its previously-resolved region are preserved until overwritten by a
+    fresh answer.
 
     Args:
         chat_id:        Telegram chat to onboard.
@@ -432,13 +501,14 @@ def handle_setup_start(
             chat_id=chat_id,
             language=lang,
             profiles=profiles,
-            onboarding_step=0,
+            onboarding_step=_POSTCODE_STEP,
             enabled_tasks=existing.enabled_tasks if existing is not None else ["laundry"],
             onboarding_complete=existing.onboarding_complete if existing is not None else False,
+            octopus_region_code=existing.octopus_region_code if existing is not None else None,
             updated_at=utcnow(),
         )
     )
-    _send_setup_question(chat_id, client, lang, step=0)
+    _send_setup_question(chat_id, client, lang, step=_POSTCODE_STEP)
 
 
 def handle_onboarding_answer(
@@ -447,12 +517,16 @@ def handle_onboarding_answer(
     client: TelegramClientProtocol,
     settings_store: ChatSettingsStore,
     lang: Language,
+    octopus: OctopusClientProtocol | None = None,
 ) -> None:
     """Process a plain-text reply during an active /setup conversation.
 
-    Validates the answer against the current step; on failure, re-asks the
-    same question with a hint rather than advancing. On the final step,
-    finalises the profile and clears ``onboarding_step``.
+    Step 0 (postcode/region) is handled separately since it's a
+    ChatSettings-level field resolved via a network lookup, not a
+    TaskProfile field. For the remaining steps: validates the answer
+    against the current step; on failure, re-asks the same question with a
+    hint rather than advancing. On the final step, finalises the profile
+    and clears ``onboarding_step``.
 
     Args:
         chat_id:        Telegram chat mid-onboarding.
@@ -460,6 +534,9 @@ def handle_onboarding_answer(
         client:         Client used to send the next question or confirmation.
         settings_store: Store used to load/persist onboarding progress.
         lang:           Display language.
+        octopus:        Used for the postcode→region lookup at step 0. If
+                         unavailable, lookup is skipped and the manual
+                         region-picker fallback is shown directly.
     """
     settings = settings_store.get(chat_id)
     if settings is None or settings.onboarding_step is None:
@@ -468,7 +545,12 @@ def handle_onboarding_answer(
         return
 
     step = settings.onboarding_step
-    field_name, question_key, parser = _SETUP_STEPS[step]
+
+    if step == _POSTCODE_STEP:
+        _handle_postcode_answer(chat_id, text, client, settings_store, settings, lang, octopus)
+        return
+
+    field_name, question_key, parser = _SETUP_STEPS[step - 1]
     profile = settings.profiles.get(_SETUP_TASK_KEY) or TaskProfile()
 
     try:
@@ -479,12 +561,12 @@ def handle_onboarding_answer(
             chat_id=chat_id,
             text=t(MessageKey.SETUP_INVALID_ANSWER, lang)
             + "\n\n"
-            + t(question_key, lang, step=step + 1, total=len(_SETUP_STEPS)),
+            + t(question_key, lang, step=step + 1, total=_TOTAL_SETUP_QUESTIONS),
         )
         return
 
     next_step = step + 1
-    is_done = next_step >= len(_SETUP_STEPS)
+    is_done = next_step >= _TOTAL_SETUP_QUESTIONS
     settings_store.save(
         ChatSettings(
             chat_id=chat_id,
@@ -493,6 +575,7 @@ def handle_onboarding_answer(
             onboarding_step=None if is_done else next_step,
             enabled_tasks=settings.enabled_tasks,
             onboarding_complete=True if is_done else settings.onboarding_complete,
+            octopus_region_code=settings.octopus_region_code,
             updated_at=utcnow(),
         )
     )
@@ -501,6 +584,51 @@ def handle_onboarding_answer(
         client.send_message(chat_id=chat_id, text=t(MessageKey.SETUP_DONE, lang))
     else:
         _send_setup_question(chat_id, client, lang, step=next_step)
+
+
+def _handle_postcode_answer(
+    chat_id: int,
+    text: str,
+    client: TelegramClientProtocol,
+    settings_store: ChatSettingsStore,
+    settings: ChatSettings,
+    lang: Language,
+    octopus: OctopusClientProtocol | None,
+) -> None:
+    """Resolve a postcode answer to a GSP region, or fall back to manual pick.
+
+    On success, advances onboarding to step 1 (the first TaskProfile
+    question) and confirms the resolved region. On failure — no Octopus
+    client available, or the lookup itself finds no/an ambiguous match —
+    ``onboarding_step`` does not advance; the region-picker keyboard is
+    shown and the user can either tap a region or resend a postcode.
+    """
+    region = octopus.lookup_gsp(text.strip()) if octopus is not None else None
+
+    if region is None:
+        client.send_message(
+            chat_id=chat_id,
+            text=t(MessageKey.SETUP_REGION_LOOKUP_FAILED, lang),
+            reply_markup=_region_keyboard(),
+        )
+        return
+
+    settings_store.save(
+        ChatSettings(
+            chat_id=chat_id,
+            language=settings.language,
+            profiles=settings.profiles,
+            onboarding_step=_POSTCODE_STEP + 1,
+            enabled_tasks=settings.enabled_tasks,
+            onboarding_complete=settings.onboarding_complete,
+            octopus_region_code=region,
+            updated_at=utcnow(),
+        )
+    )
+    client.send_message(
+        chat_id=chat_id, text=t(MessageKey.SETUP_REGION_CONFIRMED, lang, region=region)
+    )
+    _send_setup_question(chat_id, client, lang, step=_POSTCODE_STEP + 1)
 
 
 def handle_profile(
@@ -562,6 +690,7 @@ def handle_reset(
             onboarding_step=None,
             enabled_tasks=settings.enabled_tasks if settings is not None else ["laundry"],
             onboarding_complete=False,
+            octopus_region_code=settings.octopus_region_code if settings is not None else None,
             updated_at=utcnow(),
         )
     )
@@ -571,11 +700,18 @@ def handle_reset(
 def _send_setup_question(
     chat_id: int, client: TelegramClientProtocol, lang: Language, step: int
 ) -> None:
-    """Send the numbered question for ``step`` of the /setup conversation."""
-    _, question_key, _ = _SETUP_STEPS[step]
+    """Send the numbered question for ``step`` of the /setup conversation.
+
+    ``step`` 0 is the postcode/region question; steps 1..len(_SETUP_STEPS)
+    map to ``_SETUP_STEPS[step - 1]``.
+    """
+    if step == _POSTCODE_STEP:
+        question_key = MessageKey.SETUP_Q_POSTCODE
+    else:
+        _, question_key, _ = _SETUP_STEPS[step - 1]
     client.send_message(
         chat_id=chat_id,
-        text=t(question_key, lang, step=step + 1, total=len(_SETUP_STEPS)),
+        text=t(question_key, lang, step=step + 1, total=_TOTAL_SETUP_QUESTIONS),
     )
 
 
@@ -715,6 +851,7 @@ def _with_enabled_tasks(
         onboarding_step=settings.onboarding_step if settings is not None else None,
         enabled_tasks=enabled_tasks,
         onboarding_complete=settings.onboarding_complete if settings is not None else False,
+        octopus_region_code=settings.octopus_region_code if settings is not None else None,
         updated_at=utcnow(),
     )
 
@@ -739,3 +876,39 @@ def _language_keyboard() -> dict[str, object]:
         ]
     )
     return markup.model_dump()
+
+
+# GSP region letter -> display name, per Octopus's published region list.
+_REGION_DISPLAY: dict[str, str] = {
+    "A": "Eastern",
+    "B": "East Midlands",
+    "C": "London",
+    "D": "Merseyside",
+    "E": "Midlands",
+    "F": "North East",
+    "G": "North West",
+    "H": "Southern",
+    "J": "South East",
+    "K": "South West",
+    "L": "Yorkshire",
+    "M": "South Scotland",
+    "N": "North Scotland",
+    "P": "North Wales",
+}
+
+
+def _region_keyboard() -> dict[str, object]:
+    """Return the InlineKeyboardMarkup dict for manual GSP region selection.
+
+    Two buttons per row, in ``REGION_LETTERS`` order — the manual fallback
+    shown when postcode lookup fails or no Octopus client is available.
+    """
+    buttons = [
+        InlineKeyboardButton(
+            text=f"{letter} — {_REGION_DISPLAY[letter]}",
+            callback_data=f"{REGION_CALLBACK_PREFIX}{letter}",
+        )
+        for letter in REGION_LETTERS
+    ]
+    rows = [buttons[i : i + 2] for i in range(0, len(buttons), 2)]
+    return InlineKeyboardMarkup(inline_keyboard=rows).model_dump()

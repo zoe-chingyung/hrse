@@ -122,6 +122,12 @@ class ChatSettings(BaseModel):
                          chats with this set are daily-notification recipients.
                          Forward-only field — pre-Sprint-A records lack it and
                          are treated as incomplete, not migrated.
+        octopus_region_code: This chat's single-letter Octopus GSP region
+                         (e.g. "C" for London), set during /setup via
+                         postcode lookup or manual selection (Sprint B).
+                         Required before onboarding_complete can be True —
+                         structurally enforced by the onboarding step order,
+                         not re-validated here.
         updated_at:      UTC timestamp of the last settings change.
     """
 
@@ -164,6 +170,10 @@ class ChatSettings(BaseModel):
     onboarding_complete: bool = Field(
         default=False,
         description="True once this chat has finished registration and is a notification recipient",
+    )
+    octopus_region_code: str | None = Field(
+        default=None,
+        description="Single-letter Octopus GSP region code for this chat, or None if not yet set",
     )
     updated_at: datetime = Field(..., description="UTC timestamp of last update")
 
