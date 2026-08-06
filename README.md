@@ -22,6 +22,7 @@ The system recommends — it does not control appliances.
 | Sprint 5B | Per-chat `/setup` onboarding, `TaskProfile`, `/profile`, `/reset` | ✅ Done |
 | Sprint 5C | Generic `FlexibleTaskConfig`, task registry, `/tasks` `/add_task` `/remove_task` | ✅ Done |
 | Sprint A | Multi-user registration — S3 is the recipient source of truth, invite-only `/start <code>` gate | ✅ Done |
+| Sprint B | Per-region pricing — postcode → GSP region at onboarding, daily job fetches prices once per region | ✅ Done |
 
 ---
 
@@ -33,17 +34,25 @@ EventBridge (cron)
     ├── 16:45 UTC → DailyPlanning   (recommend for tomorrow)
     └── 08:00 UTC → MorningReminder (confirm for today)
                 │
-                ├── Octopus Agile API  → half-hourly prices
-                ├── Open-Meteo API     → daily weather forecast
+                ├── S3 settings/       → registered (onboarding_complete)
+                │                        chats, grouped by GSP region
+                ├── Octopus Agile API  → half-hourly prices, fetched once
+                │                        per distinct region, not per chat
+                ├── Open-Meteo API     → daily weather forecast (global)
                 └── S3 event store     → weekly laundry count
                             │
-                      DecisionService
+                      DecisionService (per chat, per enabled task)
                       (5 rules, pure Python)
                             │
                     NotificationService
                             │
-                     Telegram → You 📱
+                  Telegram → each registered chat 📱
 ```
+
+Every household registers itself via `/start <code>` (see
+[Registration](#registration-invite-only)); the bot is not single-tenant —
+any number of chats can register, each with its own tasks, thresholds, and
+electricity pricing region.
 
 ### The five decision rules
 
@@ -219,7 +228,7 @@ Version: 0.1.0
 | `/language` | Change the chat's language (English / 中文) |
 | `/prices` | Today's Agile prices — cheapest-window bar chart |
 | `/prices_tomorrow` | Tomorrow's prices (published ~16:00 UK time) |
-| `/setup` | Configure this chat's own laundry preferences (6-question conversation) |
+| `/setup` | Configure this chat's region + laundry preferences (postcode, then a 6-question conversation) |
 | `/profile` | Show this chat's current settings, or a hint to run `/setup` |
 | `/reset` | Clear this chat's settings — revert to the global defaults |
 | `/tasks` | List which tasks (laundry, dishwasher, ev) this chat gets recommendations for |
@@ -243,8 +252,10 @@ the definition of "registered recipient". Nothing else grants that status:
 2. **Correct code** → a fresh `ChatSettings` is saved
    (`onboarding_complete: false`) and the bilingual welcome + language
    picker starts, same as before.
-3. **`/setup`** — the existing 6-question conversation. Its final answer
-   sets `onboarding_complete: true`, which is what makes the chat a daily
+3. **`/setup`** — postcode/region first (see
+   [Per-region pricing](#per-region-pricing) below), then the existing
+   6-question laundry conversation. Its final answer sets
+   `onboarding_complete: true`, which is what makes the chat a daily
    notification recipient (see [Architecture](docs/architecture.md)).
 4. **`/reset`** clears `onboarding_complete` back to `false`, dropping the
    chat from notifications until it completes `/setup` again.
@@ -252,6 +263,26 @@ the definition of "registered recipient". Nothing else grants that status:
 Being added to a group (`my_chat_member`) still sends the bilingual welcome
 keyboard, same as always — but joining a group does **not** register it;
 someone still has to run `/start <code>` in that chat.
+
+### Per-region pricing
+
+Octopus Agile prices differ by grid supply point (GSP) region — the trailing
+letter of a tariff code, e.g. `E-1R-AGILE-24-10-01-C` for London. `/setup`'s
+first question (step 1) asks for a postcode and resolves it to a region via
+Octopus's public GSP lookup API:
+
+- **Lookup succeeds** → the region is confirmed and onboarding continues to
+  the usual laundry questions.
+- **Lookup fails** (no/ambiguous match, or the API is unreachable) → an
+  inline keyboard of all 14 GSP regions is shown; tap one, or just resend a
+  postcode to retry the lookup.
+
+A chat cannot complete onboarding without a region — it's the first
+question, and every later question is gated behind answering it. The daily
+job fetches prices **once per distinct region** among that day's recipients
+(not once per chat, and not once globally) — see
+[docs/architecture.md](docs/architecture.md) for the grouping logic and its
+failure-isolation behaviour (one bad region's fetch never blocks the rest).
 
 ### Group onboarding & language
 
@@ -282,7 +313,10 @@ A chat's `/setup` answers cover 6 of the constraints (laundry target,
 earliest/latest time, outdoor drying, timezone, wash budget); the rest
 (`duration_slots`, `machine_kwh`, `min_uv`, `max_rain_probability`) always
 come from the global `Settings` defaults, even for a chat with a profile —
-`/setup` intentionally stays short.
+`/setup` intentionally stays short. (Postcode/region is asked first but
+isn't a `TaskProfile` field — it's stored directly on
+`ChatSettings.octopus_region_code`, see
+[Per-region pricing](#per-region-pricing).)
 
 ### Multi-task support
 
@@ -439,7 +473,8 @@ hrse/
 | `dishwasher`/`ev` have no onboarding or env config | Only their hardcoded `TASK_REGISTRY` defaults are used | Extend `/setup` or add per-task env vars |
 | S3 read-modify-write, no concurrency control | Could lose events if two Lambdas write simultaneously | Low risk now; fix before scaling |
 | ~~Recipients hardcoded in a Secret~~ | ~~Adding a household meant editing Secrets Manager by hand~~ | ✅ Resolved (Sprint A) — self-service `/start <code>`, recipients derive from S3 |
-| Every chat shares one global task config/region | No per-household region or per-task-parameter isolation yet | Sprint B (regions), Sprint C (task-selection onboarding) |
+| ~~Every chat shares one global region~~ | ~~One tariff code for every recipient, regardless of where they live~~ | ✅ Resolved (Sprint B) — postcode→GSP region at onboarding, priced per region |
+| Every chat shares one global task-parameter registry | `dishwasher`/`ev` still have no per-chat onboarding or config | Sprint C (task-selection onboarding) |
 | UTC-only week definition | Households far from UTC see slightly wrong week boundaries | Use `HRSE_DISPLAY_TIMEZONE` in `WeeklyStateService` |
 
 ---

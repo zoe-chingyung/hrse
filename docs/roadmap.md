@@ -1,8 +1,8 @@
 # HRSE Roadmap
 
-Version: 3.2
+Version: 3.3
 
-Status: Post-MVP Evolution — Sprints 5A/5B/5C/A complete (2026-08-06)
+Status: Post-MVP Evolution — Sprints 5A/5B/5C/A/B complete (2026-08-07)
 
 ---
 
@@ -346,13 +346,43 @@ Outcome:
   regions, or EV/dishwasher config — every registered chat still shares one
   global region and task registry. See Sprint B and Sprint C below.
 
-**Next up:**
-* **Sprint B — Regions**: per-chat Octopus tariff/region instead of one
-  global `HRSE_OCTOPUS_TARIFF_CODE`.
-* **Sprint C — Task-selection onboarding**: replace the reused `/setup`
-  conversation in the registration flow with a proper button-driven
-  task-selection step (`/tasks`/`/add_task` becomes onboarding UI, not just
-  a post-registration command).
+**Next up:** Sprint B (regions, below), then Sprint C (task-selection
+onboarding).
+
+---
+
+## Sprint B — Per-Region Pricing
+
+Status: Complete (2026-08-07)
+
+Focus:
+
+* Postcode → GSP region capture at onboarding
+* Per-region grouped price fetch in the daily job
+
+Outcome:
+
+* `/setup` now asks for a postcode first and resolves it to an Octopus GSP
+  region via the public grid-supply-points API (`HttpOctopusClient.lookup_gsp`).
+  A failed/ambiguous lookup falls back to a 14-region button picker
+  (`region:<letter>` callback, mirroring the language picker) or a retry.
+  A chat cannot complete onboarding without a region — structurally
+  enforced by the step order, not a separate check.
+* `schedule_handler` groups recipients by `octopus_region_code` and fetches
+  Agile prices **once per distinct region**, not once globally and not once
+  per chat (`build_octopus_client` + `build_regional_tariff_code`, cached
+  per-region for the invocation). A region whose fetch fails is logged and
+  skipped — its chats miss this run, but every other region still gets
+  notified. Chats with no region (pre-Sprint-B) keep using the single
+  global fetch, so no existing behaviour changed for them.
+* Deliberately deferred: weather stays a single global fetch (no per-region
+  concept); per-task parameters and the task-selection onboarding UI are
+  still Sprint C's scope, untouched here.
+
+**Next up:** Sprint C — task-selection onboarding: replace the reused
+`/setup` laundry conversation in the registration flow with a proper
+button-driven task-selection step (`/tasks`/`/add_task` becomes onboarding
+UI, not just a post-registration command).
 
 ---
 

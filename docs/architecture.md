@@ -1,7 +1,7 @@
 # HRSE — Architecture
 
-> Status: **Timezone fix + Sprint 5A/5B/5C/A Complete**
-> Last updated: 2026-08-06
+> Status: **Timezone fix + Sprint 5A/5B/5C/A/B Complete**
+> Last updated: 2026-08-07
 
 ---
 
@@ -26,8 +26,9 @@ It runs entirely on AWS managed services with zero operational overhead. Users i
 │   └───────────────────┬─────────────────────────────┘              │
 │                       │                                             │
 │            ┌──────────▼──────────┐                                 │
-│            │  schedule-handler   │◄── Octopus Agile API            │
-│            │  (Lambda)           │◄── Open-Meteo API               │
+│            │  schedule-handler   │◄── Octopus Agile API,           │
+│            │  (Lambda)           │    once per recipient region    │
+│            │                     │◄── Open-Meteo API (global)      │
 │            │                     │◄── S3 event store               │
 │            │  DecisionService    │                                 │
 │            │  (5 rules)          │                                 │
@@ -59,12 +60,12 @@ It runs entirely on AWS managed services with zero operational overhead. Users i
 
 | Component | Technology | Purpose |
 |---|---|---|
-| `schedule-handler` | AWS Lambda (Python 3.12) | Fetches prices + weather, runs engine, sends notifications |
+| `schedule-handler` | AWS Lambda (Python 3.12) | Fetches prices (once per recipient GSP region) + weather, runs engine per chat/task, sends notifications |
 | `telegram-handler` | AWS Lambda (Python 3.12) | Receives webhook commands, writes events, sends replies |
 | EventBridge rules | Amazon EventBridge | Two cron schedules: 16:45 (planning) and 08:00 (reminder) |
 | API Gateway HTTP API | Amazon API Gateway v2 | Exposes `POST /webhook` to Telegram |
 | Event store | Amazon S3 | Household activity events as a JSON array |
-| Chat-settings store | Amazon S3 | One `ChatSettings` JSON object per chat (`settings/{chat_id}.json`): language, profile, onboarding step/completion, enabled tasks. Source of truth for recipients (Sprint A). |
+| Chat-settings store | Amazon S3 | One `ChatSettings` JSON object per chat (`settings/{chat_id}.json`): language, profile, onboarding step/completion, enabled tasks, GSP region code. Source of truth for recipients (Sprint A) and their pricing region (Sprint B). |
 | Secrets | AWS Secrets Manager | `bot_token` only for Telegram (Sprint A: `chat_id`/`chat_ids` no longer read by the daily job) |
 | Observability | Lambda Powertools + CloudWatch | Structured logging, X-Ray tracing |
 | Infrastructure | Terraform | All resources versioned as code |
@@ -159,10 +160,15 @@ EventBridge → schedule-handler Lambda
                 └─► ChatSettings | None  for the surviving chat_ids
                 │
                 ├─► enabled_tasks = chat_settings.enabled_tasks or ["laundry"]
+                ├─► _prices_for_chat(chat_settings, ...)   (Sprint B — see §17)
+                │       region set  → that region's prices, fetched once and
+                │                     cached for every chat sharing it
+                │       no region  → the single global `prices` fetched above
+                │       region fetch failed → None; chat is skipped this run
                 ├─► for each task_name in enabled_tasks:
                 │       "laundry"  → LaundryTaskConfig.from_profile_or_settings(profile, settings)
                 │       otherwise → TASK_REGISTRY[task_name]()   (defaults only)
-                │       DecisionService.evaluate(...) → Recommendation
+                │       DecisionService.evaluate(..., prices=chat_prices, ...) → Recommendation
                 │
                 ├─► display_tz = profile.timezone or HRSE_DISPLAY_TIMEZONE
                 └─► NotificationService(display_tz).format_multi(recommendations, PLANNING)
@@ -203,6 +209,15 @@ You → Telegram → API Gateway → telegram-handler Lambda
 | Resolution | 30-minute settlement periods |
 | Price field | `value_inc_vat` (pence/kWh inc. VAT) |
 | Publish time | ~16:00 UK time for next day |
+
+**GSP region lookup** (Sprint B, onboarding only — never on the daily path):
+
+| Property | Value |
+|---|---|
+| Endpoint | `/v1/industry/grid-supply-points/?postcode={postcode}` |
+| Auth | None (public endpoint) |
+| Response | `results: [{"group_id": "_C", ...}]` — strip the leading `_` for the region letter |
+| Failure handling | Any no-match/ambiguous-match/error → `None`, never raises; caller falls back to manual region selection |
 
 ### Open-Meteo
 
@@ -293,7 +308,8 @@ Schedule Lambda IAM grants:
 | S3 read-modify-write with no concurrency control | Concurrent Lambda invocations could lose events | S3 conditional puts (ETag) or move events to DynamoDB |
 | Rule 1 (target check) reads `WeeklySummary.laundry_count` for every task | A dishwasher/EV target check is gated by the laundry counter, not its own | Generalise events/`WeeklySummary` to per-task completion counts |
 | `dishwasher`/`ev` have no `/setup` onboarding or env config | Only their `TASK_REGISTRY` built-in defaults are used, chat-wide | Extend the onboarding step table or add per-task env vars |
-| Every registered chat shares one global task config/region | No per-household region or per-task-parameter isolation | Sprint B (regions), Sprint C (task-selection onboarding) |
+| ~~Every registered chat shares one global region~~ | ~~One tariff code for every recipient regardless of location~~ | ✅ Resolved (Sprint B) — see §17 |
+| Every registered chat shares one global task-parameter registry | `dishwasher`/`ev` still have no per-chat onboarding or config | Sprint C (task-selection onboarding) |
 | UTC-only week definition | Households far from UTC see slightly wrong week boundaries | Use `HRSE_DISPLAY_TIMEZONE` in `WeeklyStateService` |
 
 ---
@@ -423,5 +439,60 @@ The `onboarding_complete` filter only applies to the store-derived path — `_ch
 `my_chat_member` (bot added to a group) still sends the bilingual welcome keyboard directly — it does **not** create or touch `ChatSettings`. A bot already sitting in a group will not re-fire `my_chat_member`, so someone must run `/start <code>` manually in that chat to register it.
 
 `HRSE_INVITE_CODE` defaults to an empty string; `handle_start` treats an empty configured code as "registration always rejected" rather than "any code accepted", so an environment that hasn't set the variable can't be silently registered into.
+
+---
+
+## 17. Per-Region Grouped Price Fetch (Sprint B)
+
+**Invariant:** Agile prices are fetched **once per distinct GSP region** among that run's recipients — never once globally for everyone, and never once per chat.
+
+### Region capture (onboarding, one-time)
+
+`/setup` step 0 asks for a postcode instead of jumping straight to the laundry questions:
+
+```
+postcode text
+    │
+    ├─► HttpOctopusClient.lookup_gsp(postcode)   (GET grid-supply-points/?postcode=...)
+    │       one match  → region letter, e.g. "C"
+    │       no/ambiguous match, or any error → None (never raises)
+    │
+    ├─ region found → save ChatSettings.octopus_region_code, advance to step 1
+    │
+    └─ region not found → send the 14-button region-picker keyboard
+            (region:<letter> callback_query → handle_region_callback,
+             mirrors the language picker) — or the user just resends a
+             postcode to retry the lookup
+```
+
+Every later `/setup` question is indexed off step 1 onward (`_SETUP_STEPS[step - 1]` in `telegram/commands.py`), so `onboarding_complete` can never become `True` without a region already set — structural enforcement, not a separate runtime check.
+
+### Fan-out (`schedule_handler`), grouped by region
+
+```python
+region_prices_cache: dict[str, list[PricePoint] | None] = {}
+
+for chat_id in chat_ids:
+    chat_settings = _safe_get_chat_settings(settings_store, chat_id)
+    chat_prices = _prices_for_chat(
+        chat_settings, prices, day_start, day_end,
+        octopus_client_for_region, region_prices_cache,
+    )
+    if chat_prices is None:
+        continue   # that region's fetch failed this run; already logged
+    ...  # DecisionService.evaluate(..., prices=chat_prices, ...) per enabled task
+```
+
+- **No region set** (pre-Sprint-B or test-injected chats) → `chat_prices` is the single global `prices` fetched at the top of the handler (the same fetch that also drives the response-body summary) — this is what keeps every pre-Sprint-B test passing unchanged.
+- **Region set** → `_fetch_region_prices` builds a tariff code (`build_regional_tariff_code(product_code, region_letter)`) and a fresh client (`build_octopus_client(tariff_code)`), fetches once, and caches the result (success *or* failure) in `region_prices_cache` keyed by region letter — a second chat in the same region never triggers a second fetch.
+- **A region's fetch fails** (invalid letter, 404, any `OctopusApiError`) → logged, cached as `None`, and every chat in that region is skipped for this run with its own warning log. Other regions are unaffected — one bad region can't take down the whole job.
+
+`build_octopus_client(tariff_code)` (in `clients/octopus.py`) is the uncached counterpart to the existing `get_octopus_client()` singleton — each region needs its own client instance since `HttpOctopusClient` is constructed with a fixed tariff code.
+
+### Testability
+
+`schedule_handler.handler()` gained `_octopus_client_for_region: Callable[[str], OctopusClientProtocol] | None`, parallel to the existing `_octopus` injection point. Tests inject a recording factory stub to assert "one fetch per region" and failure isolation without any network access; production omits it and falls back to `_real_octopus_client_for_region`, which is itself covered by one wiring test that mocks `urllib.request.urlopen` directly (see `tests/unit/test_schedule_handler.py::TestPerRegionPriceFetch`).
+
+Weather stays a single global fetch (`WeatherClient.get_forecast`) — no per-region concept exists for it in this sprint.
 
 ---

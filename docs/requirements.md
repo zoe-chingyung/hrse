@@ -106,6 +106,17 @@ per-tenant config or data partitioning.
 | FR-63 | `/reset` SHALL clear `onboarding_complete` to `false`, removing the chat from notifications until it completes `/setup` again. | ✅ Done |
 | FR-64 | An already-registered chat re-running `/start` SHALL NOT have its settings wiped; it SHALL be told to use `/reset` instead. | ✅ Done |
 
+### 3.8 Per-Region Pricing (Sprint B)
+
+| ID | Requirement | Status |
+|---|---|---|
+| FR-70 | Registration SHALL capture each chat's GSP pricing region via postcode lookup (Octopus's public grid-supply-points API), as the first `/setup` question. | ✅ Done |
+| FR-71 | If postcode lookup fails (no match, ambiguous match, or the lookup API is unreachable), the chat SHALL be offered manual region selection (a 14-region button picker) as a fallback, or may resend a postcode to retry. | ✅ Done |
+| FR-72 | A chat SHALL NOT be able to complete onboarding (`onboarding_complete: true`) without a resolved region. | ✅ Done |
+| FR-73 | **Invariant:** the daily notification job SHALL fetch Agile prices at most once per distinct GSP region represented among that run's recipients — never once per chat, and never a single fetch shared across differing regions. | ✅ Done |
+| FR-74 | A region whose price fetch fails SHALL NOT block notifications to chats in other regions; only that region's chats are skipped for the run. | ✅ Done |
+| FR-75 | A regional tariff code SHALL only ever be built from a validated GSP letter (the real 14-letter set; `I`/`O` excluded) — never assembled from unvalidated input. | ✅ Done |
+
 ---
 
 ## 4. Non-Functional Requirements
