@@ -124,6 +124,17 @@ data "aws_iam_policy_document" "schedule_s3" {
   }
 
   statement {
+    sid    = "AllowSettingsRead"
+    effect = "Allow"
+    # Read-only: the schedule handler only loads per-chat ChatSettings to
+    # render notifications (language, timezone, chart thresholds, enabled
+    # tasks) — it never writes them. Writes happen via the Telegram handler
+    # (see state_s3's AllowEventStoreReadWrite statement).
+    actions   = ["s3:GetObject"]
+    resources = ["${aws_s3_bucket.hrse_state.arn}/settings/*"]
+  }
+
+  statement {
     sid       = "AllowBucketList"
     effect    = "Allow"
     actions   = ["s3:ListBucket"]
