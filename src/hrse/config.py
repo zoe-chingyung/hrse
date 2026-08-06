@@ -41,6 +41,15 @@ class Settings(BaseSettings):
         description="Secrets Manager secret name for Telegram credentials",
     )
 
+    # Shared invite code gating self-service registration via /start <code>.
+    # A stranger running /start without this code never becomes a recipient.
+    # Empty by default so an undeployed/local environment can't be registered
+    # into by accident; real deployments must set HRSE_INVITE_CODE.
+    invite_code: str = Field(
+        default="",
+        description="Shared invite code required by /start <code> to register a new chat",
+    )
+
     # S3 bucket used to persist household activity events.
     # Bucket is created by Terraform; name follows the pattern hrse-{env}-state.
     state_bucket_name: str = Field(

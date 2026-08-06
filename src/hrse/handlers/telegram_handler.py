@@ -93,6 +93,7 @@ def handler(
             octopus=octopus,
             display_timezone=get_settings().display_timezone,
             window_slots=get_settings().duration_slots,
+            invite_code=get_settings().invite_code,
         )
     except Exception:
         logger.exception("Unhandled error while processing Telegram update")

@@ -20,6 +20,7 @@ from hrse.telegram.commands import (
     handle_language_callback,
     handle_language_prompt,
     handle_prices,
+    handle_start,
     handle_welcome,
 )
 
@@ -82,6 +83,78 @@ class TestHandleWelcome:
         assert "你好" in kwargs["text"]
         buttons = kwargs["reply_markup"]["inline_keyboard"][0]
         assert {b["callback_data"] for b in buttons} == {"lang:en", "lang:zh"}
+
+
+class TestHandleStart:
+    def test_missing_code_does_not_create_settings(self) -> None:
+        store = InMemoryChatSettingsStore()
+        client = _mock_client()
+        handle_start(
+            chat_id=-100123, args=[], client=client, settings_store=store, invite_code="letmein"
+        )
+        assert store.get(-100123) is None
+        _, kwargs = client.send_message.call_args
+        assert "invite" in kwargs["text"].lower()
+
+    def test_wrong_code_does_not_create_settings(self) -> None:
+        store = InMemoryChatSettingsStore()
+        client = _mock_client()
+        handle_start(
+            chat_id=-100123,
+            args=["nope"],
+            client=client,
+            settings_store=store,
+            invite_code="letmein",
+        )
+        assert store.get(-100123) is None
+        _, kwargs = client.send_message.call_args
+        assert "invite" in kwargs["text"].lower()
+
+    def test_correct_code_creates_incomplete_settings_and_starts_onboarding(self) -> None:
+        store = InMemoryChatSettingsStore()
+        client = _mock_client()
+        handle_start(
+            chat_id=-100123,
+            args=["letmein"],
+            client=client,
+            settings_store=store,
+            invite_code="letmein",
+        )
+        saved = store.get(-100123)
+        assert saved is not None
+        assert saved.onboarding_complete is False
+        _, kwargs = client.send_message.call_args
+        assert "Hello" in kwargs["text"]
+        assert "你好" in kwargs["text"]
+
+    def test_already_registered_chat_is_not_wiped(self) -> None:
+        store = InMemoryChatSettingsStore()
+        original = ChatSettings(
+            chat_id=-100123,
+            language=Language.ZH,
+            onboarding_complete=True,
+            updated_at=datetime.now(tz=UTC),
+        )
+        store.save(original)
+        client = _mock_client()
+        handle_start(
+            chat_id=-100123,
+            args=["letmein"],
+            client=client,
+            settings_store=store,
+            invite_code="letmein",
+        )
+        assert store.get(-100123) == original
+        _, kwargs = client.send_message.call_args
+        assert "/reset" in kwargs["text"]
+
+    def test_no_invite_code_configured_always_rejects(self) -> None:
+        store = InMemoryChatSettingsStore()
+        client = _mock_client()
+        handle_start(
+            chat_id=-100123, args=[""], client=client, settings_store=store, invite_code=""
+        )
+        assert store.get(-100123) is None
 
 
 class TestHandleLanguagePrompt:

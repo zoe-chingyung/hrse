@@ -22,7 +22,13 @@ from pydantic import ValidationError
 
 from hrse import __version__
 from hrse.clients.octopus import OctopusApiError
-from hrse.i18n import MessageKey, bilingual_welcome, t
+from hrse.i18n import (
+    MessageKey,
+    bilingual_already_registered,
+    bilingual_invite_required,
+    bilingual_welcome,
+    t,
+)
 from hrse.models.chat_settings import ChatSettings, Language, TaskProfile
 from hrse.models.events import LAUNDRY_COMPLETED, Event
 from hrse.models.task_config import TASK_REGISTRY
@@ -157,6 +163,48 @@ def handle_summary(
             total_events=summary.total_events,
         ),
     )
+
+
+# ---------------------------------------------------------------------------
+# Sprint A — invite-only registration gate
+# ---------------------------------------------------------------------------
+
+
+def handle_start(
+    chat_id: int,
+    args: list[str],
+    client: TelegramClientProtocol,
+    settings_store: ChatSettingsStore,
+    invite_code: str,
+) -> None:
+    """Gate self-service registration behind a shared invite code.
+
+    A stranger running /start with no or the wrong code must never become a
+    recipient, so no ``ChatSettings`` is created in that case. A chat that
+    has already completed onboarding is told to use /reset instead of being
+    silently re-registered, which would wipe its saved profile.
+
+    Args:
+        chat_id:        Telegram chat requesting registration.
+        args:           Command arguments; ``args[0]`` is the invite code.
+        client:         Client used to send the reply.
+        settings_store: Store used to check for / create this chat's settings.
+        invite_code:    The configured shared invite code to match against.
+    """
+    existing = settings_store.get(chat_id)
+    if existing is not None and existing.onboarding_complete:
+        client.send_message(chat_id=chat_id, text=bilingual_already_registered())
+        return
+
+    supplied_code = args[0] if args else None
+    if not invite_code or supplied_code != invite_code:
+        client.send_message(chat_id=chat_id, text=bilingual_invite_required())
+        return
+
+    settings_store.save(
+        ChatSettings(chat_id=chat_id, onboarding_complete=False, updated_at=utcnow())
+    )
+    handle_welcome(chat_id=chat_id, client=client)
 
 
 # ---------------------------------------------------------------------------

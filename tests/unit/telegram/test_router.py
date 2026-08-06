@@ -208,12 +208,6 @@ class TestRouteCallbackQuery:
 
 
 class TestRouteSprint6Commands:
-    @patch("hrse.telegram.router.handle_welcome")
-    def test_start_dispatches_to_welcome(self, mock_welcome: MagicMock) -> None:
-        client = MagicMock()
-        route(update=_update("/start", chat_id=8), client=client)
-        mock_welcome.assert_called_once_with(chat_id=8, client=client)
-
     @patch("hrse.telegram.router.handle_language_prompt")
     def test_language_dispatches_to_prompt(self, mock_prompt: MagicMock) -> None:
         client = MagicMock()
@@ -450,6 +444,49 @@ class TestRouteSprint5CCommands:
     def test_remove_task_without_settings_store_sends_unavailable(self) -> None:
         client = MagicMock()
         route(update=_update("/remove_task laundry", chat_id=8), client=client)
+        _, kwargs = client.send_message.call_args
+        assert "unavailable" in kwargs["text"].lower()
+
+
+class TestRouteSprintARegistration:
+    @patch("hrse.telegram.router.handle_start")
+    def test_start_dispatches_to_handler_with_args_and_invite_code(
+        self, mock_handler: MagicMock
+    ) -> None:
+        client = MagicMock()
+        settings_store = MagicMock()
+        settings_store.get.return_value = None
+        route(
+            update=_update("/start letmein", chat_id=8),
+            client=client,
+            settings_store=settings_store,
+            invite_code="letmein",
+        )
+        mock_handler.assert_called_once_with(
+            chat_id=8,
+            args=["letmein"],
+            client=client,
+            settings_store=settings_store,
+            invite_code="letmein",
+        )
+
+    @patch("hrse.telegram.router.handle_start")
+    def test_start_without_args_dispatches_with_empty_args(self, mock_handler: MagicMock) -> None:
+        client = MagicMock()
+        settings_store = MagicMock()
+        settings_store.get.return_value = None
+        route(update=_update("/start", chat_id=8), client=client, settings_store=settings_store)
+        mock_handler.assert_called_once_with(
+            chat_id=8,
+            args=[],
+            client=client,
+            settings_store=settings_store,
+            invite_code="",
+        )
+
+    def test_start_without_settings_store_sends_unavailable(self) -> None:
+        client = MagicMock()
+        route(update=_update("/start letmein", chat_id=8), client=client)
         _, kwargs = client.send_message.call_args
         assert "unavailable" in kwargs["text"].lower()
 

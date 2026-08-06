@@ -63,6 +63,8 @@ class MessageKey(StrEnum):
     PRICE_BAR_CHART_TITLE_TOMORROW = auto()
     PRICE_BAR_CHART_FOOTER = auto()
     PRICE_BAR_CHART_AVOID_HEADER = auto()
+    START_INVITE_REQUIRED = auto()
+    START_ALREADY_REGISTERED = auto()
 
 
 _COMMANDS_EN = (
@@ -328,6 +330,17 @@ _CATALOGUE: dict[MessageKey, dict[Language, str]] = {
         Language.EN: "⚠️ Avoid heavy use (priciest slots):",
         Language.ZH: "⚠️ 避免大量用電(最貴時段):",
     },
+    MessageKey.START_INVITE_REQUIRED: {
+        Language.EN: (
+            "🔒 This bot is invite-only.\n"
+            "Ask the owner for your invite code, then run <code>/start &lt;code&gt;</code>."
+        ),
+        Language.ZH: "🔒 呢個機械人淨係限邀請登記。\n請問管理員攞邀請碼,然後執行 <code>/start &lt;code&gt;</code>。",
+    },
+    MessageKey.START_ALREADY_REGISTERED: {
+        Language.EN: "✅ You're already set up. Use /reset if you want to start over.",
+        Language.ZH: "✅ 你已經設定咗。想重新開始就用 /reset。",
+    },
 }
 
 
@@ -364,4 +377,30 @@ def bilingual_welcome() -> str:
         + _COMMANDS_ZH
         + "\n\n"
         + t(MessageKey.LANGUAGE_PROMPT, Language.EN)
+    )
+
+
+def bilingual_invite_required() -> str:
+    """Return the invite-only rejection message in both languages.
+
+    Sent when /start is run with a missing or incorrect invite code, before
+    any language has been chosen for the chat — hence bilingual.
+    """
+    return (
+        t(MessageKey.START_INVITE_REQUIRED, Language.EN)
+        + "\n\n"
+        + t(MessageKey.START_INVITE_REQUIRED, Language.ZH)
+    )
+
+
+def bilingual_already_registered() -> str:
+    """Return the already-registered notice in both languages.
+
+    Sent when /start is re-run by a chat that has already completed
+    onboarding, so its saved profile isn't silently wiped.
+    """
+    return (
+        t(MessageKey.START_ALREADY_REGISTERED, Language.EN)
+        + "\n\n"
+        + t(MessageKey.START_ALREADY_REGISTERED, Language.ZH)
     )

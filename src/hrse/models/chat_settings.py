@@ -117,6 +117,11 @@ class ChatSettings(BaseModel):
                          wants recommendations for. Defaults to
                          ``["laundry"]`` so pre-5C chats behave unchanged.
                          Managed via /tasks, /add_task, /remove_task.
+        onboarding_complete: True once this chat has finished registration
+                         (Sprint A: /start <code> then the /setup flow). Only
+                         chats with this set are daily-notification recipients.
+                         Forward-only field — pre-Sprint-A records lack it and
+                         are treated as incomplete, not migrated.
         updated_at:      UTC timestamp of the last settings change.
     """
 
@@ -155,6 +160,10 @@ class ChatSettings(BaseModel):
         ge=1,
         le=48,
         description="Max number of most-expensive slots shown in the avoid-list section of the price bar chart notification",
+    )
+    onboarding_complete: bool = Field(
+        default=False,
+        description="True once this chat has finished registration and is a notification recipient",
     )
     updated_at: datetime = Field(..., description="UTC timestamp of last update")
 

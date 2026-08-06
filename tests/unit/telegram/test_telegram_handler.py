@@ -199,3 +199,63 @@ class TestSprint6Wiring:
         saved = settings_store.get(-100123)
         assert saved is not None
         assert saved.language is Language.ZH
+
+
+# ---------------------------------------------------------------------------
+# Sprint A — invite_code resolved from Settings and forwarded to the router
+# ---------------------------------------------------------------------------
+
+
+class TestSprintAInviteCodeWiring:
+    def _start_event(self, text: str, chat_id: int = -100123) -> dict:
+        return {
+            "body": json.dumps(
+                {
+                    "update_id": 3,
+                    "message": {
+                        "message_id": 1,
+                        "chat": {"id": chat_id},
+                        "from": {"id": 42, "is_bot": False, "first_name": "Zoe"},
+                        "text": text,
+                    },
+                }
+            )
+        }
+
+    def test_correct_invite_code_registers_chat(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from hrse.store.chat_settings_store import InMemoryChatSettingsStore
+
+        monkeypatch.setenv("HRSE_INVITE_CODE", "letmein")
+        client = MagicMock()
+        settings_store = InMemoryChatSettingsStore()
+        response = handler(
+            self._start_event("/start letmein"),
+            _context(),
+            _client=client,
+            _store=MagicMock(),
+            _settings_store=settings_store,
+            _octopus=MagicMock(),
+        )
+        assert response["statusCode"] == 200
+        saved = settings_store.get(-100123)
+        assert saved is not None
+        assert saved.onboarding_complete is False
+
+    def test_wrong_invite_code_does_not_register_chat(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from hrse.store.chat_settings_store import InMemoryChatSettingsStore
+
+        monkeypatch.setenv("HRSE_INVITE_CODE", "letmein")
+        client = MagicMock()
+        settings_store = InMemoryChatSettingsStore()
+        response = handler(
+            self._start_event("/start wrongcode"),
+            _context(),
+            _client=client,
+            _store=MagicMock(),
+            _settings_store=settings_store,
+            _octopus=MagicMock(),
+        )
+        assert response["statusCode"] == 200
+        assert settings_store.get(-100123) is None

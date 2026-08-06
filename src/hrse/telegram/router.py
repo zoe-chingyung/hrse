@@ -41,6 +41,7 @@ from hrse.telegram.commands import (
     handle_remove_task,
     handle_reset,
     handle_setup_start,
+    handle_start,
     handle_summary,
     handle_tasks,
     handle_unknown,
@@ -70,6 +71,7 @@ def route(
     octopus: OctopusClientProtocol | None = None,
     display_timezone: str = "Europe/London",
     window_slots: int = 4,
+    invite_code: str = "",
 ) -> None:
     """Dispatch ``update`` to the appropriate handler.
 
@@ -82,6 +84,7 @@ def route(
         octopus:          Price client for the /prices command.
         display_timezone: IANA timezone for day boundaries and time display.
         window_slots:     Length of the cheapest /prices window, in 30-min slots.
+        invite_code:      Shared invite code required by /start <code> to register.
     """
     if update.my_chat_member is not None:
         _route_my_chat_member(update, client)
@@ -93,7 +96,14 @@ def route(
 
     if update.message is not None:
         _route_message(
-            update, client, store, settings_store, octopus, display_timezone, window_slots
+            update,
+            client,
+            store,
+            settings_store,
+            octopus,
+            display_timezone,
+            window_slots,
+            invite_code,
         )
         return
 
@@ -153,6 +163,7 @@ def _route_message(
     octopus: OctopusClientProtocol | None,
     display_timezone: str,
     window_slots: int,
+    invite_code: str,
 ) -> None:
     """Parse and dispatch a slash command message.
 
@@ -172,7 +183,17 @@ def _route_message(
         handle_health(chat_id=chat_id, client=client, lang=lang)
 
     elif command == "/start":
-        handle_welcome(chat_id=chat_id, client=client)
+        if settings_store is None:
+            logger.error("No settings store available for /start")
+            _service_unavailable(chat_id, client, lang)
+        else:
+            handle_start(
+                chat_id=chat_id,
+                args=args,
+                client=client,
+                settings_store=settings_store,
+                invite_code=invite_code,
+            )
 
     elif command == "/language":
         handle_language_prompt(chat_id=chat_id, client=client)
