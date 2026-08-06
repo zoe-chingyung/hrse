@@ -186,6 +186,11 @@ class SecretsManagerChatIdsProvider:
     Falls back to the singular ``chat_id`` key so that existing secrets work
     without migration.
 
+    Deprecated (Sprint A): ``schedule_handler`` no longer calls this for the
+    daily fan-out — recipients now come from
+    ``ChatSettingsStore.list_all_chat_ids()`` (S3 is the source of truth).
+    Kept in place rather than deleted in case another caller needs it.
+
     Args:
         secret_name: The name (or ARN) of the secret in Secrets Manager.
         region_name: The AWS region where the secret lives.

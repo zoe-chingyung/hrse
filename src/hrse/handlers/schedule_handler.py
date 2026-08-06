@@ -59,7 +59,6 @@ from hrse.services.weekly_state import WeeklyStateService
 from hrse.store.chat_settings_store import ChatSettingsStore, get_chat_settings_store
 from hrse.store.s3_store import get_event_store
 from hrse.telegram.client import TelegramClientProtocol, get_telegram_client
-from hrse.telegram.token_provider import get_chat_ids_provider
 
 if TYPE_CHECKING:
     from aws_lambda_powertools.utilities.typing import LambdaContext
@@ -115,13 +114,17 @@ def handler(
     settings_store = _settings_store if _settings_store is not None else get_chat_settings_store()
     telegram = _telegram if _telegram is not None else get_telegram_client()
 
-    # Resolve target chat IDs.  _chat_ids > _chat_id > Secrets Manager.
+    # Resolve target chat IDs.  _chat_ids > _chat_id > settings store.
+    # Sprint A: recipients now derive from S3 (ChatSettingsStore.list_all_chat_ids),
+    # not Secrets Manager — see hrse.telegram.token_provider for the now-unused
+    # SecretsManagerChatIdsProvider this replaces for the daily job.
     if _chat_ids is not None:
         chat_ids = _chat_ids
     elif _chat_id is not None:
         chat_ids = [_chat_id]
     else:
-        chat_ids = get_chat_ids_provider()()
+        # TODO(sprintA-chunk3): filter to onboarding_complete
+        chat_ids = settings_store.list_all_chat_ids()
 
     # Determine target date and notification kind from the event.
     now = datetime.now(tz=UTC)

@@ -6,6 +6,7 @@ Uses moto to simulate S3 — no real AWS calls.
 from __future__ import annotations
 
 from datetime import UTC, datetime
+from unittest.mock import MagicMock
 
 import boto3
 import pytest
@@ -132,6 +133,42 @@ class TestS3ChatSettingsStore:
         assert loaded is not None
         assert loaded.profiles == {"laundry": TaskProfile(target_per_week=4)}
 
+    @pytest.mark.integration()
+    def test_list_all_chat_ids_returns_all_stored_chats(self, store: S3ChatSettingsStore) -> None:
+        store.save(_settings(chat_id=1))
+        store.save(_settings(chat_id=-2))
+        store.save(_settings(chat_id=3))
+        assert sorted(store.list_all_chat_ids()) == [-2, 1, 3]
+
+    @pytest.mark.integration()
+    def test_list_all_chat_ids_empty_bucket(self, store: S3ChatSettingsStore) -> None:
+        assert store.list_all_chat_ids() == []
+
+    @pytest.mark.integration()
+    def test_list_all_chat_ids_ignores_malformed_keys(self, store: S3ChatSettingsStore) -> None:
+        store.save(_settings(chat_id=1))
+        client = boto3.client("s3", region_name=_REGION)
+        client.put_object(Bucket=_BUCKET, Key="settings/not-an-int.json", Body=b"{}")
+        client.put_object(Bucket=_BUCKET, Key="settings/2.txt", Body=b"{}")
+        client.put_object(Bucket=_BUCKET, Key="settings/", Body=b"")
+        assert store.list_all_chat_ids() == [1]
+
+    def test_list_all_chat_ids_paginates(self, store: S3ChatSettingsStore) -> None:
+        # Exercise the pagination loop directly via a mocked client/paginator
+        # rather than creating 1000+ real moto objects.
+        mock_client = MagicMock()
+        paginator = MagicMock()
+        mock_client.get_paginator.return_value = paginator
+        paginator.paginate.return_value = [
+            {"Contents": [{"Key": "settings/1.json"}, {"Key": "settings/2.json"}]},
+            {"Contents": [{"Key": "settings/3.json"}]},
+        ]
+        store._client = mock_client  # noqa: SLF001 — test injects a mocked boto3 client
+
+        assert sorted(store.list_all_chat_ids()) == [1, 2, 3]
+        mock_client.get_paginator.assert_called_once_with("list_objects_v2")
+        paginator.paginate.assert_called_once_with(Bucket=_BUCKET, Prefix="settings/")
+
 
 # ---------------------------------------------------------------------------
 # InMemoryChatSettingsStore
@@ -146,6 +183,15 @@ class TestInMemoryChatSettingsStore:
         store = InMemoryChatSettingsStore()
         store.save(_settings())
         assert store.get(-100) == _settings()
+
+    def test_list_all_chat_ids_returns_all_stored_chats(self) -> None:
+        store = InMemoryChatSettingsStore()
+        store.save(_settings(chat_id=1))
+        store.save(_settings(chat_id=-2))
+        assert sorted(store.list_all_chat_ids()) == [-2, 1]
+
+    def test_list_all_chat_ids_empty_store(self) -> None:
+        assert InMemoryChatSettingsStore().list_all_chat_ids() == []
 
 
 # ---------------------------------------------------------------------------

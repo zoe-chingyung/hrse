@@ -67,6 +67,9 @@ class _StubSettingsStore:
     def save(self, settings: ChatSettings) -> None:
         self._settings[settings.chat_id] = settings
 
+    def list_all_chat_ids(self) -> list[int]:
+        return list(self._settings.keys())
+
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -444,3 +447,74 @@ class TestMultiTaskNotifications:
         response, mock_telegram = _invoke("DailyPlanning", settings_store=store)
         assert response["statusCode"] == 200
         mock_telegram.send_message.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# Sprint A, Chunk 1 — recipient source flips from Secrets Manager to S3
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit()
+class TestRecipientSourceFromStore:
+    def test_fan_out_uses_store_chat_ids_when_no_injection_given(self) -> None:
+        # No _chat_id / _chat_ids injected: the handler must fall back to
+        # settings_store.list_all_chat_ids() rather than Secrets Manager.
+        tomorrow = (datetime.now(tz=UTC) + timedelta(days=1)).date()
+        store = _StubSettingsStore(
+            {
+                111: ChatSettings(chat_id=111, updated_at=datetime.now(tz=UTC)),
+                222: ChatSettings(chat_id=222, updated_at=datetime.now(tz=UTC)),
+            }
+        )
+        mock_telegram = MagicMock(spec=TelegramClientProtocol)
+        response = handler(
+            event={"source": "hrse.scheduler", "detail-type": "DailyPlanning", "detail": {}},
+            context=MagicMock(),
+            _octopus=_StubOctopus(_cheap_prices(tomorrow)),
+            _weather=_StubWeather(_good_forecast(tomorrow)),
+            _store=_StubStore(),
+            _settings_store=store,
+            _telegram=mock_telegram,
+        )
+        assert response["statusCode"] == 200
+        notified_chat_ids = {
+            call.kwargs["chat_id"] for call in mock_telegram.send_message.call_args_list
+        }
+        assert notified_chat_ids == {111, 222}
+
+    def test_fan_out_empty_store_sends_nothing(self) -> None:
+        tomorrow = (datetime.now(tz=UTC) + timedelta(days=1)).date()
+        mock_telegram = MagicMock(spec=TelegramClientProtocol)
+        response = handler(
+            event={"source": "hrse.scheduler", "detail-type": "DailyPlanning", "detail": {}},
+            context=MagicMock(),
+            _octopus=_StubOctopus(_cheap_prices(tomorrow)),
+            _weather=_StubWeather(_good_forecast(tomorrow)),
+            _store=_StubStore(),
+            _settings_store=_StubSettingsStore(),
+            _telegram=mock_telegram,
+        )
+        assert response["statusCode"] == 200
+        mock_telegram.send_message.assert_not_called()
+
+    def test_injected_chat_ids_take_precedence_over_store(self) -> None:
+        tomorrow = (datetime.now(tz=UTC) + timedelta(days=1)).date()
+        store = _StubSettingsStore(
+            {999: ChatSettings(chat_id=999, updated_at=datetime.now(tz=UTC))}
+        )
+        mock_telegram = MagicMock(spec=TelegramClientProtocol)
+        response = handler(
+            event={"source": "hrse.scheduler", "detail-type": "DailyPlanning", "detail": {}},
+            context=MagicMock(),
+            _octopus=_StubOctopus(_cheap_prices(tomorrow)),
+            _weather=_StubWeather(_good_forecast(tomorrow)),
+            _store=_StubStore(),
+            _settings_store=store,
+            _telegram=mock_telegram,
+            _chat_ids=[42],
+        )
+        assert response["statusCode"] == 200
+        notified_chat_ids = {
+            call.kwargs["chat_id"] for call in mock_telegram.send_message.call_args_list
+        }
+        assert notified_chat_ids == {42}
