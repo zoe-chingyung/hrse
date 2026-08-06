@@ -117,14 +117,16 @@ def handler(
     # Resolve target chat IDs.  _chat_ids > _chat_id > settings store.
     # Sprint A: recipients now derive from S3 (ChatSettingsStore.list_all_chat_ids),
     # not Secrets Manager — see hrse.telegram.token_provider for the now-unused
-    # SecretsManagerChatIdsProvider this replaces for the daily job.
+    # SecretsManagerChatIdsProvider this replaces for the daily job. The
+    # onboarding_complete gate below only applies to this store-derived path;
+    # _chat_ids/_chat_id are test/ops injection hooks and bypass it, same as
+    # they've always bypassed the store entirely.
     if _chat_ids is not None:
         chat_ids = _chat_ids
     elif _chat_id is not None:
         chat_ids = [_chat_id]
     else:
-        # TODO(sprintA-chunk3): filter to onboarding_complete
-        chat_ids = settings_store.list_all_chat_ids()
+        chat_ids = _recipient_chat_ids(settings_store)
 
     # Determine target date and notification kind from the event.
     now = datetime.now(tz=UTC)
@@ -249,6 +251,23 @@ def handler(
             }
         ),
     }
+
+
+def _recipient_chat_ids(settings_store: ChatSettingsStore) -> list[int]:
+    """Return store chat_ids that have completed registration.
+
+    A completed ``ChatSettings`` (``onboarding_complete=True``) is the
+    invariant for "is a recipient" — chats mid-registration, or whose
+    settings fail to load, are skipped rather than defaulted in.
+    """
+    recipients: list[int] = []
+    for chat_id in settings_store.list_all_chat_ids():
+        settings = _safe_get_chat_settings(settings_store, chat_id)
+        if settings is None or not settings.onboarding_complete:
+            logger.debug("Skipping chat without completed onboarding", extra={"chat_id": chat_id})
+            continue
+        recipients.append(chat_id)
+    return recipients
 
 
 def _safe_get_chat_settings(store: ChatSettingsStore, chat_id: int) -> ChatSettings | None:

@@ -151,6 +151,29 @@ class TestHandleAddTask:
         assert saved.profiles["laundry"].target_per_week == 3
         assert saved.enabled_tasks == ["laundry", "ev"]
 
+    def test_preserves_onboarding_complete(self) -> None:
+        # Regression guard: /add_task must not silently unregister an
+        # already-onboarded chat from daily notifications.
+        store = InMemoryChatSettingsStore()
+        store.save(
+            ChatSettings(
+                chat_id=_CHAT,
+                onboarding_complete=True,
+                enabled_tasks=["laundry"],
+                updated_at=utcnow(),
+            )
+        )
+        handle_add_task(
+            chat_id=_CHAT,
+            args=["ev"],
+            client=_mock_client(),
+            settings_store=store,
+            lang=Language.EN,
+        )
+        saved = store.get(_CHAT)
+        assert saved is not None
+        assert saved.onboarding_complete is True
+
     def test_confirmation_sent_to_correct_chat(self) -> None:
         client = _mock_client()
         handle_add_task(

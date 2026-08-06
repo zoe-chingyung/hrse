@@ -117,6 +117,18 @@ class TestHandleSetupStart:
         assert saved.profiles["dishwasher"] == TaskProfile(target_per_week=7)
         assert saved.profiles["laundry"] == TaskProfile()
 
+    def test_preserves_onboarding_complete_when_restarting(self) -> None:
+        # Regression guard: re-running /setup on an already-registered chat
+        # must not silently drop it from daily-notification recipients.
+        store = InMemoryChatSettingsStore()
+        store.save(ChatSettings(chat_id=_CHAT, onboarding_complete=True, updated_at=utcnow()))
+        handle_setup_start(
+            chat_id=_CHAT, client=_mock_client(), settings_store=store, lang=Language.EN
+        )
+        saved = store.get(_CHAT)
+        assert saved is not None
+        assert saved.onboarding_complete is True
+
 
 # ---------------------------------------------------------------------------
 # handle_onboarding_answer — full happy path
@@ -152,6 +164,7 @@ class TestOnboardingHappyPath:
         assert profile.machine_kwh == 1.5
         assert profile.min_uv == 3.0
         assert profile.max_rain_probability == 40
+        assert saved.onboarding_complete is True
 
     def test_final_step_sends_setup_done(self) -> None:
         store = InMemoryChatSettingsStore()
@@ -173,6 +186,14 @@ class TestOnboardingHappyPath:
         _, kwargs = client.send_message.call_args
         assert "2/6" in kwargs["text"]
         assert "earliest" in kwargs["text"].lower()
+
+    def test_intermediate_step_does_not_set_onboarding_complete(self) -> None:
+        store = InMemoryChatSettingsStore()
+        client = _mock_client()
+        handle_setup_start(chat_id=_CHAT, client=client, settings_store=store, lang=Language.EN)
+
+        _answer(store, client, "2")
+        assert store.get(_CHAT).onboarding_complete is False  # type: ignore[union-attr]
 
 
 # ---------------------------------------------------------------------------
@@ -356,6 +377,14 @@ class TestHandleReset:
         assert saved.profiles == {}
         assert saved.onboarding_step is None
         assert saved.language is Language.ZH  # preserved, not overwritten by the passed-in lang
+
+    def test_reset_clears_onboarding_complete(self) -> None:
+        store = InMemoryChatSettingsStore()
+        store.save(ChatSettings(chat_id=_CHAT, onboarding_complete=True, updated_at=utcnow()))
+        handle_reset(chat_id=_CHAT, client=_mock_client(), settings_store=store, lang=Language.EN)
+        saved = store.get(_CHAT)
+        assert saved is not None
+        assert saved.onboarding_complete is False
 
     def test_reset_preserves_enabled_tasks(self) -> None:
         store = InMemoryChatSettingsStore()

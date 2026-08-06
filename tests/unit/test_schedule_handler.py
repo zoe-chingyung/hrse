@@ -462,8 +462,12 @@ class TestRecipientSourceFromStore:
         tomorrow = (datetime.now(tz=UTC) + timedelta(days=1)).date()
         store = _StubSettingsStore(
             {
-                111: ChatSettings(chat_id=111, updated_at=datetime.now(tz=UTC)),
-                222: ChatSettings(chat_id=222, updated_at=datetime.now(tz=UTC)),
+                111: ChatSettings(
+                    chat_id=111, onboarding_complete=True, updated_at=datetime.now(tz=UTC)
+                ),
+                222: ChatSettings(
+                    chat_id=222, onboarding_complete=True, updated_at=datetime.now(tz=UTC)
+                ),
             }
         )
         mock_telegram = MagicMock(spec=TelegramClientProtocol)
@@ -518,3 +522,76 @@ class TestRecipientSourceFromStore:
             call.kwargs["chat_id"] for call in mock_telegram.send_message.call_args_list
         }
         assert notified_chat_ids == {42}
+
+
+# ---------------------------------------------------------------------------
+# Sprint A, Chunk 3 — onboarding_complete gates the store-derived recipient list
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit()
+class TestOnboardingCompleteFilter:
+    def test_incomplete_chat_is_skipped_complete_chat_is_included(self) -> None:
+        tomorrow = (datetime.now(tz=UTC) + timedelta(days=1)).date()
+        store = _StubSettingsStore(
+            {
+                111: ChatSettings(
+                    chat_id=111, onboarding_complete=True, updated_at=datetime.now(tz=UTC)
+                ),
+                222: ChatSettings(
+                    chat_id=222, onboarding_complete=False, updated_at=datetime.now(tz=UTC)
+                ),
+            }
+        )
+        mock_telegram = MagicMock(spec=TelegramClientProtocol)
+        response = handler(
+            event={"source": "hrse.scheduler", "detail-type": "DailyPlanning", "detail": {}},
+            context=MagicMock(),
+            _octopus=_StubOctopus(_cheap_prices(tomorrow)),
+            _weather=_StubWeather(_good_forecast(tomorrow)),
+            _store=_StubStore(),
+            _settings_store=store,
+            _telegram=mock_telegram,
+        )
+        assert response["statusCode"] == 200
+        notified_chat_ids = {
+            call.kwargs["chat_id"] for call in mock_telegram.send_message.call_args_list
+        }
+        assert notified_chat_ids == {111}
+
+    def test_chat_with_settings_load_failure_is_skipped(self) -> None:
+        # list_all_chat_ids() reports the chat, but .get() blows up for it —
+        # must be treated the same as "settings missing", not crash the job.
+        tomorrow = (datetime.now(tz=UTC) + timedelta(days=1)).date()
+
+        class _FlakyStore(_StubSettingsStore):
+            def get(self, chat_id: int) -> ChatSettings | None:
+                if chat_id == 333:
+                    raise RuntimeError("s3 down")
+                return super().get(chat_id)
+
+        store = _FlakyStore(
+            {
+                111: ChatSettings(
+                    chat_id=111, onboarding_complete=True, updated_at=datetime.now(tz=UTC)
+                ),
+                333: ChatSettings(
+                    chat_id=333, onboarding_complete=True, updated_at=datetime.now(tz=UTC)
+                ),
+            }
+        )
+        mock_telegram = MagicMock(spec=TelegramClientProtocol)
+        response = handler(
+            event={"source": "hrse.scheduler", "detail-type": "DailyPlanning", "detail": {}},
+            context=MagicMock(),
+            _octopus=_StubOctopus(_cheap_prices(tomorrow)),
+            _weather=_StubWeather(_good_forecast(tomorrow)),
+            _store=_StubStore(),
+            _settings_store=store,
+            _telegram=mock_telegram,
+        )
+        assert response["statusCode"] == 200
+        notified_chat_ids = {
+            call.kwargs["chat_id"] for call in mock_telegram.send_message.call_args_list
+        }
+        assert notified_chat_ids == {111}

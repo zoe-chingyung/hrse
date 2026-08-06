@@ -234,6 +234,30 @@ class TestHandleLanguageCallback:
         reloaded = ChatSettings.model_validate_json(saved.model_dump_json())
         assert reloaded.language is Language.ZH
 
+    def test_switching_language_preserves_registration_and_profile(self) -> None:
+        # Regression guard: an already-registered chat that changes language
+        # via /language must not be silently unregistered (onboarding_complete
+        # reset to False) or lose its saved task profile.
+        client = _mock_client()
+        store = InMemoryChatSettingsStore()
+        store.save(
+            ChatSettings(
+                chat_id=-100123,
+                language=Language.EN,
+                onboarding_complete=True,
+                enabled_tasks=["laundry", "dishwasher"],
+                updated_at=datetime.now(tz=UTC),
+            )
+        )
+
+        handle_language_callback(query=_callback("lang:zh"), client=client, settings_store=store)
+
+        saved = store.get(-100123)
+        assert saved is not None
+        assert saved.language is Language.ZH
+        assert saved.onboarding_complete is True
+        assert saved.enabled_tasks == ["laundry", "dishwasher"]
+
 
 # ---------------------------------------------------------------------------
 # handle_prices

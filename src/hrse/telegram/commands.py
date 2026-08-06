@@ -274,7 +274,18 @@ def handle_language_callback(
         return
 
     chat_id = query.message.chat.id
-    settings_store.save(ChatSettings(chat_id=chat_id, language=lang, updated_at=utcnow()))
+    existing = settings_store.get(chat_id)
+    settings_store.save(
+        ChatSettings(
+            chat_id=chat_id,
+            language=lang,
+            profiles=existing.profiles if existing is not None else {},
+            onboarding_step=existing.onboarding_step if existing is not None else None,
+            enabled_tasks=existing.enabled_tasks if existing is not None else ["laundry"],
+            onboarding_complete=existing.onboarding_complete if existing is not None else False,
+            updated_at=utcnow(),
+        )
+    )
     client.answer_callback_query(callback_query_id=query.id)
     client.edit_message_text(
         chat_id=chat_id,
@@ -423,6 +434,7 @@ def handle_setup_start(
             profiles=profiles,
             onboarding_step=0,
             enabled_tasks=existing.enabled_tasks if existing is not None else ["laundry"],
+            onboarding_complete=existing.onboarding_complete if existing is not None else False,
             updated_at=utcnow(),
         )
     )
@@ -480,6 +492,7 @@ def handle_onboarding_answer(
             profiles={**settings.profiles, _SETUP_TASK_KEY: updated_profile},
             onboarding_step=None if is_done else next_step,
             enabled_tasks=settings.enabled_tasks,
+            onboarding_complete=True if is_done else settings.onboarding_complete,
             updated_at=utcnow(),
         )
     )
@@ -548,6 +561,7 @@ def handle_reset(
             profiles={},
             onboarding_step=None,
             enabled_tasks=settings.enabled_tasks if settings is not None else ["laundry"],
+            onboarding_complete=False,
             updated_at=utcnow(),
         )
     )
@@ -700,6 +714,7 @@ def _with_enabled_tasks(
         profiles=settings.profiles if settings is not None else {},
         onboarding_step=settings.onboarding_step if settings is not None else None,
         enabled_tasks=enabled_tasks,
+        onboarding_complete=settings.onboarding_complete if settings is not None else False,
         updated_at=utcnow(),
     )
 
