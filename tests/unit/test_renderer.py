@@ -157,6 +157,22 @@ class TestBilingual:
         assert text.startswith("```\n")
         assert text.endswith("\n```")
 
+    def test_default_title_is_today(self) -> None:
+        text = render_price_bar_chart(_slots([5.3]), _settings())
+        assert "Today's prices" in text
+
+    def test_for_tomorrow_english_title(self) -> None:
+        text = render_price_bar_chart(
+            _slots([5.3]), _settings(language=Language.EN), for_tomorrow=True
+        )
+        assert "Tomorrow's prices" in text
+
+    def test_for_tomorrow_traditional_chinese_title(self) -> None:
+        text = render_price_bar_chart(
+            _slots([5.3]), _settings(language=Language.ZH), for_tomorrow=True
+        )
+        assert "聽日電價走勢" in text
+
 
 class TestSlotLimit:
     def test_default_limit_caps_shown_rows(self) -> None:

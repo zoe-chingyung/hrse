@@ -219,7 +219,9 @@ def handler(
                 if chat_settings is not None
                 else ChatSettings(chat_id=chat_id, updated_at=now)
             )
-            chart_text = render_price_bar_chart(prices, chart_settings)
+            chart_text = render_price_bar_chart(
+                prices, chart_settings, for_tomorrow=kind == NotificationKind.PLANNING
+            )
             telegram.send_message(chat_id=chat_id, text=chart_text, parse_mode="MarkdownV2")
 
         telegram.send_message(chat_id=chat_id, text=message)

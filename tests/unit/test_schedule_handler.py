@@ -224,6 +224,16 @@ class TestPriceBarChart:
         chart_text = mock_telegram.send_message.call_args_list[0].kwargs["text"]
         assert chart_text.count("▇") >= 4  # 4 cheap slots from _cheap_prices
 
+    def test_daily_planning_chart_title_says_tomorrow(self) -> None:
+        _, mock_telegram = _invoke("DailyPlanning")
+        chart_text = mock_telegram.send_message.call_args_list[0].kwargs["text"]
+        assert "Tomorrow's prices" in chart_text
+
+    def test_morning_reminder_chart_title_says_today(self) -> None:
+        _, mock_telegram = _invoke("MorningReminder")
+        chart_text = mock_telegram.send_message.call_args_list[0].kwargs["text"]
+        assert "Today's prices" in chart_text
+
     def test_no_chart_sent_when_no_prices_available(self) -> None:
         tomorrow = (datetime.now(tz=UTC) + timedelta(days=1)).date()
         response, mock_telegram = _invoke(

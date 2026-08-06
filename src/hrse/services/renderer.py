@@ -44,13 +44,18 @@ _CHECK = "✅"  # ✅
 _DEFAULT_DISPLAY_TZ = "Europe/London"
 
 
-def render_price_bar_chart(prices: Sequence[PriceSlot], settings: ChatSettings) -> str:
+def render_price_bar_chart(
+    prices: Sequence[PriceSlot], settings: ChatSettings, *, for_tomorrow: bool = False
+) -> str:
     """Render ``prices`` as a bilingual, tiered bar chart for the daily notification.
 
     Args:
-        prices:   Half-hourly prices, non-empty, in any order.
-        settings: The chat's settings — supplies display language, timezone,
-                  colour-tier thresholds and the row-count limit.
+        prices:       Half-hourly prices, non-empty, in any order.
+        settings:     The chat's settings — supplies display language, timezone,
+                      colour-tier thresholds and the row-count limit.
+        for_tomorrow: Whether ``prices`` are for tomorrow rather than today —
+                      selects the chart title accordingly. Defaults to
+                      ``False`` so ``/prices``-style callers are unaffected.
 
     Returns:
         A MarkdownV2 message: a triple-backtick code block containing the
@@ -72,9 +77,14 @@ def render_price_bar_chart(prices: Sequence[PriceSlot], settings: ChatSettings) 
 
     lang = settings.language
     cheapest_time = shown[0].timestamp.astimezone(display_tz).strftime("%H:%M")
+    title_key = (
+        MessageKey.PRICE_BAR_CHART_TITLE_TOMORROW
+        if for_tomorrow
+        else MessageKey.PRICE_BAR_CHART_TITLE
+    )
 
     lines = [
-        t(MessageKey.PRICE_BAR_CHART_TITLE, lang),
+        t(title_key, lang),
         "",
         *[_row(slot, display_tz, green, red, max_price) for slot in shown],
         "",

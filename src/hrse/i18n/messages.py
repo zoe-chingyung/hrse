@@ -60,6 +60,7 @@ class MessageKey(StrEnum):
     TASK_NOT_ENABLED = auto()
     TASK_REMOVED = auto()
     PRICE_BAR_CHART_TITLE = auto()
+    PRICE_BAR_CHART_TITLE_TOMORROW = auto()
     PRICE_BAR_CHART_FOOTER = auto()
 
 
@@ -313,6 +314,10 @@ _CATALOGUE: dict[MessageKey, dict[Language, str]] = {
     MessageKey.PRICE_BAR_CHART_TITLE: {
         Language.EN: "⚡ Today's prices",
         Language.ZH: "⚡ 今日電價走勢",
+    },
+    MessageKey.PRICE_BAR_CHART_TITLE_TOMORROW: {
+        Language.EN: "⚡ Tomorrow's prices",
+        Language.ZH: "⚡ 聽日電價走勢",
     },
     MessageKey.PRICE_BAR_CHART_FOOTER: {
         Language.EN: "✅ Best wash time: from {time}",
