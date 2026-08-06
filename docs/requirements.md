@@ -27,8 +27,13 @@ The MVP supports one task type: **laundry**. The system determines whether laund
 - Device control (SmartThings, Home Assistant, smart plugs)
 - AI/LLM decision making
 - Mobile applications (Telegram only)
-- Multi-household / multi-tenant support
 - Real-time pricing streams
+
+Multi-household registration (Sprint A, below) is in scope: any invited
+chat can register itself as a notification recipient. What's still out of
+scope is per-household *isolation* — every registered chat shares one
+global region, task registry, and set of AWS resources; there's no
+per-tenant config or data partitioning.
 
 ---
 
@@ -90,6 +95,16 @@ The MVP supports one task type: **laundry**. The system determines whether laund
 | FR-51 | `/laundry_done` SHALL record an event and confirm with this week's count. | ✅ Done |
 | FR-52 | `/events` SHALL list recent events with timestamps. | ✅ Done |
 | FR-53 | `/summary` SHALL show the weekly activity summary. | ✅ Done |
+
+### 3.7 Registration & Access Control (Sprint A)
+
+| ID | Requirement | Status |
+|---|---|---|
+| FR-60 | Registration SHALL be invite-only: `/start <code>` SHALL only begin onboarding when `<code>` matches the configured `HRSE_INVITE_CODE`. | ✅ Done |
+| FR-61 | A missing or incorrect invite code SHALL NOT create any `ChatSettings` for that chat. | ✅ Done |
+| FR-62 | **Invariant:** a chat is a daily-notification recipient if and only if it has a stored `ChatSettings` with `onboarding_complete: true`. No other state (group membership, language choice, a `TaskProfile`) confers recipient status. | ✅ Done |
+| FR-63 | `/reset` SHALL clear `onboarding_complete` to `false`, removing the chat from notifications until it completes `/setup` again. | ✅ Done |
+| FR-64 | An already-registered chat re-running `/start` SHALL NOT have its settings wiped; it SHALL be told to use `/reset` instead. | ✅ Done |
 
 ---
 

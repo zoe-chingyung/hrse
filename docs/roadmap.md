@@ -1,8 +1,8 @@
 # HRSE Roadmap
 
-Version: 3.1
+Version: 3.2
 
-Status: Post-MVP Evolution — Sprints 5A/5B/5C complete (2026-07-29)
+Status: Post-MVP Evolution — Sprints 5A/5B/5C/A complete (2026-08-06)
 
 ---
 
@@ -319,6 +319,40 @@ Outcome:
   onboarding/env-config for `dishwasher`/`ev` (they use `TASK_REGISTRY`
   defaults only). Sprint 6 (below) was explicitly out of scope for this
   delivery and was not started.
+
+---
+
+## Sprint A — Multi-user Foundation (Registration)
+
+Status: Complete (2026-08-06)
+
+Focus:
+
+* Invite-only self-service registration
+* S3 as the recipient source of truth
+* Onboarding-completion invariant
+
+Outcome:
+
+* HRSE stopped being single-tenant. Recipients previously came from a fixed
+  `chat_ids` array in Secrets Manager; now `ChatSettingsStore.list_all_chat_ids()`
+  lists every `settings/{chat_id}.json` object in S3 (paginated), filtered to
+  chats with `onboarding_complete: true`. `/start <code>` gates registration
+  behind a shared `HRSE_INVITE_CODE` — a stranger who finds the bot can't
+  register; a correct code creates a fresh (incomplete) `ChatSettings` and
+  starts the existing welcome/language/`/setup` flow, whose final step flips
+  `onboarding_complete` to `true`. `/reset` flips it back.
+* Deliberately deferred: this sprint doesn't touch per-task parameters,
+  regions, or EV/dishwasher config — every registered chat still shares one
+  global region and task registry. See Sprint B and Sprint C below.
+
+**Next up:**
+* **Sprint B — Regions**: per-chat Octopus tariff/region instead of one
+  global `HRSE_OCTOPUS_TARIFF_CODE`.
+* **Sprint C — Task-selection onboarding**: replace the reused `/setup`
+  conversation in the registration flow with a proper button-driven
+  task-selection step (`/tasks`/`/add_task` becomes onboarding UI, not just
+  a post-registration command).
 
 ---
 

@@ -1,7 +1,7 @@
 # HRSE — Architecture
 
-> Status: **Timezone fix + Sprint 5A/5B/5C Complete**
-> Last updated: 2026-07-29
+> Status: **Timezone fix + Sprint 5A/5B/5C/A Complete**
+> Last updated: 2026-08-06
 
 ---
 
@@ -48,7 +48,8 @@ It runs entirely on AWS managed services with zero operational overhead. Users i
 │   └─────────────────────────────┘                                  │
 │                                                                     │
 │   S3: hrse-{env}-state/events/household_events.json                │
-│   Secrets Manager: hrse/{env}/telegram (bot_token + chat_id)       │
+│   S3: hrse-{env}-state/settings/{chat_id}.json  ← recipient source │
+│   Secrets Manager: hrse/{env}/telegram (bot_token only)            │
 └─────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -63,8 +64,8 @@ It runs entirely on AWS managed services with zero operational overhead. Users i
 | EventBridge rules | Amazon EventBridge | Two cron schedules: 16:45 (planning) and 08:00 (reminder) |
 | API Gateway HTTP API | Amazon API Gateway v2 | Exposes `POST /webhook` to Telegram |
 | Event store | Amazon S3 | Household activity events as a JSON array |
-| Chat-settings store | Amazon S3 | One `ChatSettings` JSON object per chat (`settings/{chat_id}.json`): language, profile, onboarding step, enabled tasks |
-| Secrets | AWS Secrets Manager | `bot_token` + `chat_id` for Telegram |
+| Chat-settings store | Amazon S3 | One `ChatSettings` JSON object per chat (`settings/{chat_id}.json`): language, profile, onboarding step/completion, enabled tasks. Source of truth for recipients (Sprint A). |
+| Secrets | AWS Secrets Manager | `bot_token` only for Telegram (Sprint A: `chat_id`/`chat_ids` no longer read by the daily job) |
 | Observability | Lambda Powertools + CloudWatch | Structured logging, X-Ray tracing |
 | Infrastructure | Terraform | All resources versioned as code |
 
@@ -147,8 +148,15 @@ EventBridge → schedule-handler Lambda
     ├─► DecisionService.evaluate(summary, prices, forecast, LaundryTaskConfig.from_settings())
     │       → global `recommendation`, used only for the response body / log line
     │
-    └─► for each chat_id (from Secrets Manager, or injected in tests):
-            ChatSettingsStore.get(chat_id) → ChatSettings | None
+    └─► for each chat_id (or injected in tests via _chat_ids/_chat_id):
+            ChatSettingsStore.list_all_chat_ids()             (Sprint A — paginated S3 listing
+                │                                               under settings/, replacing the
+                │                                               old Secrets Manager chat_ids)
+                ├─► ChatSettingsStore.get(chat_id) for each candidate
+                ├─► skip if settings is None or onboarding_complete is False
+                │       (recipient invariant: completed ChatSettings == recipient;
+                │        settings-load failures are treated as "not registered")
+                └─► ChatSettings | None  for the surviving chat_ids
                 │
                 ├─► enabled_tasks = chat_settings.enabled_tasks or ["laundry"]
                 ├─► for each task_name in enabled_tasks:
@@ -212,17 +220,24 @@ You → Telegram → API Gateway → telegram-handler Lambda
 
 ```
 s3://hrse-{environment}-state/
-└── events/
-    └── household_events.json    # JSON array, oldest-first, append-only
+├── events/
+│   └── household_events.json    # JSON array, oldest-first, append-only
+└── settings/
+    └── {chat_id}.json           # One ChatSettings object per chat
 ```
 
-Example:
+Example event log:
 ```json
 [
   {"event_type": "laundry_completed", "timestamp": "2026-06-23T14:30:00.000Z"},
   {"event_type": "laundry_completed", "timestamp": "2026-06-25T09:15:00.000Z"}
 ]
 ```
+
+`schedule_handler` derives its recipient list by listing every key under
+`settings/` (`S3ChatSettingsStore.list_all_chat_ids()`, paginated) and
+keeping only chats whose `ChatSettings.onboarding_complete` is `true` — see
+§16.
 
 **Week definition:** Monday 00:00:00 UTC (inclusive) → Sunday 23:59:59 UTC (inclusive), per ISO 8601.
 
@@ -232,16 +247,18 @@ Example:
 
 | Concern | Approach |
 |---|---|
-| Bot token + chat ID | Stored in Secrets Manager; fetched at cold-start, cached in-process |
-| Lambda IAM roles | Least-privilege; scoped to specific S3 prefix and one secret ARN |
+| Bot token | Stored in Secrets Manager; fetched at cold-start, cached in-process |
+| Registration | Invite-only: `/start <code>` must match `HRSE_INVITE_CODE`, or no `ChatSettings` is created (see §16) |
+| Lambda IAM roles | Least-privilege; scoped to specific S3 prefixes and one secret ARN |
 | S3 bucket | Versioning enabled, AES256 encryption, all public access blocked |
 | Webhook payload logging | `log_event=False` on telegram-handler to avoid logging user messages |
-| Environment variables | No secrets in env vars or Terraform state |
+| Environment variables | `HRSE_INVITE_CODE` and other config live in Lambda env vars, not Terraform-managed secrets — treat the `.tfvars` value with the same care as a password |
 
 Schedule Lambda IAM grants:
 - `secretsmanager:GetSecretValue` on `hrse/{env}/telegram`
 - `s3:GetObject`, `s3:PutObject` on `hrse-{env}-state/events/*`
-- `s3:ListBucket` on `hrse-{env}-state`
+- `s3:GetObject` (read-only) on `hrse-{env}-state/settings/*`
+- `s3:ListBucket` on `hrse-{env}-state` (needed by `list_all_chat_ids()`'s paginated listing)
 
 ---
 
@@ -276,7 +293,7 @@ Schedule Lambda IAM grants:
 | S3 read-modify-write with no concurrency control | Concurrent Lambda invocations could lose events | S3 conditional puts (ETag) or move events to DynamoDB |
 | Rule 1 (target check) reads `WeeklySummary.laundry_count` for every task | A dishwasher/EV target check is gated by the laundry counter, not its own | Generalise events/`WeeklySummary` to per-task completion counts |
 | `dishwasher`/`ev` have no `/setup` onboarding or env config | Only their `TASK_REGISTRY` built-in defaults are used, chat-wide | Extend the onboarding step table or add per-task env vars |
-| Single household per deployment | No multi-tenant support | Future: household ID in event key prefix |
+| Every registered chat shares one global task config/region | No per-household region or per-task-parameter isolation | Sprint B (regions), Sprint C (task-selection onboarding) |
 | UTC-only week definition | Households far from UTC see slightly wrong week boundaries | Use `HRSE_DISPLAY_TIMEZONE` in `WeeklyStateService` |
 
 ---
@@ -361,5 +378,50 @@ Flow:
 3. `handle_onboarding_answer` looks up the current step's `(field_name, question_key, parser)`, calls `parser(text)`, and rebuilds the profile via `TaskProfile(**{**profile.model_dump(), field_name: value})` — going through the constructor (not `model_copy(update=...)`) so every field validator, including the cross-field `latest_finish > earliest_start` check, re-runs on each answer.
 4. On `(ValueError, ValidationError)` from either the parser or the rebuild, the same question is re-sent with a hint — `onboarding_step` does not advance.
 5. On the last step, `onboarding_step` is cleared (`None`) and `SETUP_DONE` is sent; the finished `profile` is now used everywhere `from_profile_or_settings` is called for that chat.
+
+---
+
+## 16. Registration & Recipient Gate (Sprint A)
+
+**Invariant:** a completed `ChatSettings` object in S3 (`onboarding_complete: true`) *is* the definition of a registered recipient. Nothing else — being in a group, having picked a language, having a `TaskProfile` — grants that status.
+
+```
+/start <code>
+    │
+    ├─ existing ChatSettings has onboarding_complete=True?
+    │       └─ yes → bilingual "already set up, use /reset" reply. No write.
+    │
+    ├─ code missing or != HRSE_INVITE_CODE?
+    │       └─ yes → bilingual "invite-only" reply. No ChatSettings created.
+    │
+    └─ code correct → save ChatSettings(onboarding_complete=False, ...)
+                        → handle_welcome() (bilingual welcome + language keyboard)
+                            → /language callback, then /setup
+                                → final /setup answer sets onboarding_complete=True
+```
+
+`/reset` sets `onboarding_complete=False` and clears `profiles`/`onboarding_step`, dropping the chat from notifications until it completes `/setup` again. Every other settings-mutating path (`/language` callback, `/add_task`, `/remove_task`, restarting `/setup`) preserves whatever `onboarding_complete` was already — none of them are meant to change registration status, only `/start`'s registration branch and `/reset`/the final `/setup` step are.
+
+**Fan-out (`schedule_handler`):**
+
+```python
+if _chat_ids is not None:
+    chat_ids = _chat_ids            # test/ops injection — bypasses the gate below
+elif _chat_id is not None:
+    chat_ids = [_chat_id]           # test/ops injection — bypasses the gate below
+else:
+    chat_ids = [
+        chat_id
+        for chat_id in settings_store.list_all_chat_ids()
+        if (settings := _safe_get_chat_settings(settings_store, chat_id)) is not None
+        and settings.onboarding_complete
+    ]
+```
+
+The `onboarding_complete` filter only applies to the store-derived path — `_chat_ids`/`_chat_id` are explicit test/ops overrides and have always bypassed the store entirely, same as before Sprint A.
+
+`my_chat_member` (bot added to a group) still sends the bilingual welcome keyboard directly — it does **not** create or touch `ChatSettings`. A bot already sitting in a group will not re-fire `my_chat_member`, so someone must run `/start <code>` manually in that chat to register it.
+
+`HRSE_INVITE_CODE` defaults to an empty string; `handle_start` treats an empty configured code as "registration always rejected" rather than "any code accepted", so an environment that hasn't set the variable can't be silently registered into.
 
 ---

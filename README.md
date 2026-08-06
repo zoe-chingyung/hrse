@@ -21,6 +21,7 @@ The system recommends — it does not control appliances.
 | Sprint 5A | Laundry thresholds moved from hardcoded Python to env-driven `Settings` | ✅ Done |
 | Sprint 5B | Per-chat `/setup` onboarding, `TaskProfile`, `/profile`, `/reset` | ✅ Done |
 | Sprint 5C | Generic `FlexibleTaskConfig`, task registry, `/tasks` `/add_task` `/remove_task` | ✅ Done |
+| Sprint A | Multi-user registration — S3 is the recipient source of truth, invite-only `/start <code>` gate | ✅ Done |
 
 ---
 
@@ -176,13 +177,14 @@ The mock server generates a realistic Agile price profile (cheap overnight, morn
 
 ### 1. Create the secret in AWS Secrets Manager
 
-Get your Telegram chat ID by messaging [@userinfobot](https://t.me/userinfobot).
+The secret only needs to hold the bot token — recipients are no longer read
+from it (see [Registration](#registration-invite-only) below).
 
 ```bash
 aws secretsmanager create-secret \
   --region eu-west-2 \
   --name hrse/dev/telegram \
-  --secret-string '{"bot_token":"<YOUR_BOT_TOKEN>","chat_id":"<YOUR_CHAT_ID>"}'
+  --secret-string '{"bot_token":"<YOUR_BOT_TOKEN>"}'
 ```
 
 ### 2. Deploy infrastructure
@@ -213,7 +215,7 @@ Version: 0.1.0
 
 | Command | Action |
 |---|---|
-| `/start` | Bilingual welcome + language picker |
+| `/start <code>` | Register this chat (invite-only) — correct code starts the bilingual welcome + language picker |
 | `/language` | Change the chat's language (English / 中文) |
 | `/prices` | Today's Agile prices — cheapest-window bar chart |
 | `/prices_tomorrow` | Tomorrow's prices (published ~16:00 UK time) |
@@ -227,6 +229,29 @@ Version: 0.1.0
 | `/laundry_done` | Record a completed laundry run |
 | `/events` | Last 10 events with timestamps |
 | `/summary` | This week's laundry count |
+
+### Registration (invite-only)
+
+A completed `ChatSettings` object in S3 — `onboarding_complete: true` — is
+the definition of "registered recipient". Nothing else grants that status:
+
+1. **`/start <code>`** — `<code>` must match `HRSE_INVITE_CODE`. A missing
+   or wrong code sends a bilingual "invite-only" notice and creates nothing;
+   a stranger who finds the bot can never register. A chat that's already
+   completed onboarding gets a bilingual "already set up, use /reset" notice
+   instead of being silently re-registered.
+2. **Correct code** → a fresh `ChatSettings` is saved
+   (`onboarding_complete: false`) and the bilingual welcome + language
+   picker starts, same as before.
+3. **`/setup`** — the existing 6-question conversation. Its final answer
+   sets `onboarding_complete: true`, which is what makes the chat a daily
+   notification recipient (see [Architecture](docs/architecture.md)).
+4. **`/reset`** clears `onboarding_complete` back to `false`, dropping the
+   chat from notifications until it completes `/setup` again.
+
+Being added to a group (`my_chat_member`) still sends the bilingual welcome
+keyboard, same as always — but joining a group does **not** register it;
+someone still has to run `/start <code>` in that chat.
 
 ### Group onboarding & language
 
@@ -339,7 +364,8 @@ All variables use the `HRSE_` prefix. Copy `.env.example` to `.env` for local de
 | `HRSE_AWS_REGION` | `eu-west-2` | AWS region |
 | `HRSE_LOG_LEVEL` | `INFO` | Lambda log level (`DEBUG`\|`INFO`\|`WARNING`\|`ERROR`) |
 | `HRSE_STATE_BUCKET_NAME` | `hrse-dev-state` | S3 bucket for event storage |
-| `HRSE_TELEGRAM_SECRET_NAME` | `hrse/dev/telegram` | Secrets Manager secret (bot_token + chat_id) |
+| `HRSE_TELEGRAM_SECRET_NAME` | `hrse/dev/telegram` | Secrets Manager secret (bot_token; `chat_id`/`chat_ids` are legacy, no longer read by the daily job) |
+| `HRSE_INVITE_CODE` | *(empty)* | Shared code `/start <code>` must match to register a chat. Empty means registration is closed — set this before deploying |
 | `HRSE_OCTOPUS_PRODUCT_CODE` | `AGILE-24-10-01` | Octopus Agile product code |
 | `HRSE_OCTOPUS_TARIFF_CODE` | `E-1R-AGILE-24-10-01-A` | Regional tariff code — change trailing letter for your region |
 | `HRSE_WEATHER_LATITUDE` | `51.5072` | Forecast latitude (default: London) |
@@ -412,7 +438,8 @@ hrse/
 | Rule 1 (target check) uses `laundry_count` for every task type | A dishwasher/EV target check is gated by the laundry counter, not its own | Generalise `WeeklySummary`/events to per-task counts |
 | `dishwasher`/`ev` have no onboarding or env config | Only their hardcoded `TASK_REGISTRY` defaults are used | Extend `/setup` or add per-task env vars |
 | S3 read-modify-write, no concurrency control | Could lose events if two Lambdas write simultaneously | Low risk now; fix before scaling |
-| Single household per deployment | No multi-tenant support | Future architecture sprint |
+| ~~Recipients hardcoded in a Secret~~ | ~~Adding a household meant editing Secrets Manager by hand~~ | ✅ Resolved (Sprint A) — self-service `/start <code>`, recipients derive from S3 |
+| Every chat shares one global task config/region | No per-household region or per-task-parameter isolation yet | Sprint B (regions), Sprint C (task-selection onboarding) |
 | UTC-only week definition | Households far from UTC see slightly wrong week boundaries | Use `HRSE_DISPLAY_TIMEZONE` in `WeeklyStateService` |
 
 ---
