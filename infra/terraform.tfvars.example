@@ -2,3 +2,7 @@
 aws_region  = "eu-west-2"
 environment = "dev"
 log_level   = "INFO"
+
+# Shared invite code /start <code> must match to register a new chat.
+# Required, no default — pick something only you'll share with invitees.
+invite_code = "<CHANGE_ME>"

@@ -66,6 +66,7 @@ module "telegram_lambda" {
     HRSE_TELEGRAM_SECRET_NAME = "hrse/${var.environment}/telegram"
     HRSE_STATE_BUCKET_NAME    = "hrse-${var.environment}-state"
     HRSE_LOG_LEVEL            = var.log_level
+    HRSE_INVITE_CODE          = var.invite_code
     POWERTOOLS_SERVICE_NAME   = "hrse-telegram-handler"
     POWERTOOLS_LOG_LEVEL      = var.log_level
   }

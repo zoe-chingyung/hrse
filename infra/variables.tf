@@ -28,3 +28,14 @@ variable "log_level" {
     error_message = "log_level must be one of: DEBUG, INFO, WARNING, ERROR."
   }
 }
+
+variable "invite_code" {
+  description = "Shared invite code /start <code> must match to register a new chat (Sprint A). No default — must be set explicitly, e.g. in a gitignored terraform.tfvars."
+  type        = string
+  sensitive   = true
+
+  validation {
+    condition     = length(var.invite_code) > 0
+    error_message = "invite_code must be set (non-empty) — see terraform.tfvars.example."
+  }
+}
