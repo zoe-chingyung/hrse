@@ -877,3 +877,51 @@ class TestPerRegionPriceFetch:
         )
         assert response["statusCode"] == 200
         mock_telegram.send_message.assert_called()
+
+
+# ---------------------------------------------------------------------------
+# Sprint C, Chunk 3 — /reset drops a chat from the recipient list
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.unit()
+class TestResetExcludesChatFromRecipients:
+    def test_reset_mid_cycle_chat_receives_no_notification(self) -> None:
+        from hrse.telegram.commands import handle_reset
+
+        tomorrow = (datetime.now(tz=UTC) + timedelta(days=1)).date()
+        store = _StubSettingsStore(
+            {
+                111: ChatSettings(
+                    chat_id=111,
+                    onboarding_complete=True,
+                    enabled_tasks=["laundry"],
+                    profiles={"laundry": TaskProfile()},
+                    updated_at=datetime.now(tz=UTC),
+                ),
+                222: ChatSettings(
+                    chat_id=222, onboarding_complete=True, updated_at=datetime.now(tz=UTC)
+                ),
+            }
+        )
+
+        # Chat 111 runs /reset mid-cycle, dropping it from recipients until
+        # it completes the button flow again.
+        handle_reset(chat_id=111, client=MagicMock(), settings_store=store, lang=Language.EN)
+
+        mock_telegram = MagicMock(spec=TelegramClientProtocol)
+        response = handler(
+            event={"source": "hrse.scheduler", "detail-type": "DailyPlanning", "detail": {}},
+            context=MagicMock(),
+            _octopus=_StubOctopus(_cheap_prices(tomorrow)),
+            _weather=_StubWeather(_good_forecast(tomorrow)),
+            _store=_StubStore(),
+            _settings_store=store,
+            _telegram=mock_telegram,
+        )
+        assert response["statusCode"] == 200
+        notified_chat_ids = {
+            call.kwargs["chat_id"] for call in mock_telegram.send_message.call_args_list
+        }
+        assert 111 not in notified_chat_ids
+        assert 222 in notified_chat_ids
