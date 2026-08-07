@@ -45,6 +45,7 @@ class FlexibleTaskConfig(Protocol):
     machine_kwh: float
     min_uv: float
     max_rain_probability: int
+    weather_aware: bool
 
 
 class _TaskConfigBase(BaseModel):
@@ -116,6 +117,9 @@ class LaundryTaskConfig(_TaskConfigBase):
     max_rain_probability: int = Field(
         default=100, ge=0, le=100, description="Upper rain probability threshold (percent)"
     )
+    weather_aware: bool = Field(
+        default=True, description="Whether the weather gate (UV/rain) applies to this task"
+    )
 
     # ------------------------------------------------------------------
     # Construction from global Settings (Sprint 5A)
@@ -177,6 +181,7 @@ class LaundryTaskConfig(_TaskConfigBase):
             machine_kwh=profile.machine_kwh,
             min_uv=profile.min_uv,
             max_rain_probability=profile.max_rain_probability,
+            weather_aware=profile.weather_aware,
         )
 
     # ------------------------------------------------------------------
@@ -215,6 +220,9 @@ class DishwasherConfig(_TaskConfigBase):
     max_rain_probability: int = Field(
         default=100, ge=0, le=100, description="Unused — dishwashers run indoors"
     )
+    weather_aware: bool = Field(
+        default=False, description="Dishwashers run indoors — never gated by weather"
+    )
 
 
 class EVChargingConfig(_TaskConfigBase):
@@ -242,6 +250,9 @@ class EVChargingConfig(_TaskConfigBase):
     min_uv: float = Field(default=0.0, ge=0, description="Unused — no weather gate for charging")
     max_rain_probability: int = Field(
         default=100, ge=0, le=100, description="Unused — no weather gate for charging"
+    )
+    weather_aware: bool = Field(
+        default=False, description="EV charging happens regardless of weather — never gated"
     )
 
 
@@ -311,4 +322,5 @@ def build_task_config(
         latest_finish=profile.latest_finish,
         wash_budget_pence=profile.wash_budget_pence,
         machine_kwh=profile.machine_kwh,
+        weather_aware=profile.weather_aware,
     )

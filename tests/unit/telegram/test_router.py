@@ -278,16 +278,6 @@ class TestGroupCommandSuffix:
 
 
 class TestRouteSprint5BCommands:
-    @patch("hrse.telegram.router.handle_setup_start")
-    def test_setup_dispatches_to_handler(self, mock_handler: MagicMock) -> None:
-        client = MagicMock()
-        settings_store = MagicMock()
-        settings_store.get.return_value = None
-        route(update=_update("/setup", chat_id=8), client=client, settings_store=settings_store)
-        mock_handler.assert_called_once_with(
-            chat_id=8, client=client, settings_store=settings_store, lang=Language.EN
-        )
-
     @patch("hrse.telegram.router.handle_profile")
     def test_profile_dispatches_to_handler(self, mock_handler: MagicMock) -> None:
         client = MagicMock()
@@ -307,12 +297,6 @@ class TestRouteSprint5BCommands:
         mock_handler.assert_called_once_with(
             chat_id=8, client=client, settings_store=settings_store, lang=Language.EN
         )
-
-    def test_setup_without_settings_store_sends_unavailable(self) -> None:
-        client = MagicMock()
-        route(update=_update("/setup", chat_id=8), client=client)
-        _, kwargs = client.send_message.call_args
-        assert "unavailable" in kwargs["text"].lower()
 
     def test_profile_without_settings_store_sends_unavailable(self) -> None:
         client = MagicMock()
@@ -337,7 +321,12 @@ class TestRouteSprint5BCommands:
 
         settings_store = InMemoryChatSettingsStore()
         settings_store.save(
-            ChatSettings(chat_id=8, onboarding_step=2, updated_at=datetime(2026, 7, 12, tzinfo=UTC))
+            ChatSettings(
+                chat_id=8,
+                onboarding_stage="postcode",
+                onboarding_step=0,
+                updated_at=datetime(2026, 7, 12, tzinfo=UTC),
+            )
         )
         client = MagicMock()
         route(update=_update("2 hours", chat_id=8), client=client, settings_store=settings_store)
@@ -359,7 +348,12 @@ class TestRouteSprint5BCommands:
 
         settings_store = InMemoryChatSettingsStore()
         settings_store.save(
-            ChatSettings(chat_id=8, onboarding_step=0, updated_at=datetime(2026, 7, 12, tzinfo=UTC))
+            ChatSettings(
+                chat_id=8,
+                onboarding_stage="postcode",
+                onboarding_step=0,
+                updated_at=datetime(2026, 7, 12, tzinfo=UTC),
+            )
         )
         octopus = MagicMock()
         route(
@@ -433,55 +427,53 @@ class TestRouteSprint5CCommands:
             chat_id=8, client=client, settings_store=settings_store, lang=Language.EN
         )
 
-    @patch("hrse.telegram.router.handle_add_task")
-    def test_add_task_dispatches_to_handler_with_args(self, mock_handler: MagicMock) -> None:
-        client = MagicMock()
-        settings_store = MagicMock()
-        settings_store.get.return_value = None
-        route(
-            update=_update("/add_task dishwasher", chat_id=8),
-            client=client,
-            settings_store=settings_store,
-        )
-        mock_handler.assert_called_once_with(
-            chat_id=8,
-            args=["dishwasher"],
-            client=client,
-            settings_store=settings_store,
-            lang=Language.EN,
-        )
-
-    @patch("hrse.telegram.router.handle_remove_task")
-    def test_remove_task_dispatches_to_handler_with_args(self, mock_handler: MagicMock) -> None:
-        client = MagicMock()
-        settings_store = MagicMock()
-        settings_store.get.return_value = None
-        route(
-            update=_update("/remove_task ev", chat_id=8),
-            client=client,
-            settings_store=settings_store,
-        )
-        mock_handler.assert_called_once_with(
-            chat_id=8, args=["ev"], client=client, settings_store=settings_store, lang=Language.EN
-        )
-
     def test_tasks_without_settings_store_sends_unavailable(self) -> None:
         client = MagicMock()
         route(update=_update("/tasks", chat_id=8), client=client)
         _, kwargs = client.send_message.call_args
         assert "unavailable" in kwargs["text"].lower()
 
-    def test_add_task_without_settings_store_sends_unavailable(self) -> None:
-        client = MagicMock()
-        route(update=_update("/add_task laundry", chat_id=8), client=client)
-        _, kwargs = client.send_message.call_args
-        assert "unavailable" in kwargs["text"].lower()
 
-    def test_remove_task_without_settings_store_sends_unavailable(self) -> None:
+class TestRouteSprintCTaskOnboardingCallbacks:
+    @patch("hrse.telegram.router.handle_task_toggle_callback")
+    def test_task_toggle_dispatches_to_handler(self, mock_cb: MagicMock) -> None:
         client = MagicMock()
-        route(update=_update("/remove_task laundry", chat_id=8), client=client)
-        _, kwargs = client.send_message.call_args
-        assert "unavailable" in kwargs["text"].lower()
+        settings_store = MagicMock()
+        update = _callback_update("task:laundry")
+        route(update=update, client=client, settings_store=settings_store)
+        mock_cb.assert_called_once_with(
+            query=update.callback_query, client=client, settings_store=settings_store
+        )
+
+    def test_task_toggle_without_settings_store_is_answered(self) -> None:
+        client = MagicMock()
+        route(update=_callback_update("task:laundry"), client=client)
+        client.answer_callback_query.assert_called_once()
+
+    @patch("hrse.telegram.router.handle_task_done_callback")
+    def test_task_done_dispatches_to_handler(self, mock_cb: MagicMock) -> None:
+        client = MagicMock()
+        settings_store = MagicMock()
+        update = _callback_update("task_done")
+        route(update=update, client=client, settings_store=settings_store)
+        mock_cb.assert_called_once_with(
+            query=update.callback_query, client=client, settings_store=settings_store
+        )
+
+    @patch("hrse.telegram.router.handle_config_callback")
+    def test_config_answer_dispatches_to_handler(self, mock_cb: MagicMock) -> None:
+        client = MagicMock()
+        settings_store = MagicMock()
+        update = _callback_update("cfg:target_per_week:3")
+        route(update=update, client=client, settings_store=settings_store)
+        mock_cb.assert_called_once_with(
+            query=update.callback_query, client=client, settings_store=settings_store
+        )
+
+    def test_config_answer_without_settings_store_is_answered(self) -> None:
+        client = MagicMock()
+        route(update=_callback_update("cfg:target_per_week:3"), client=client)
+        client.answer_callback_query.assert_called_once()
 
 
 class TestRouteSprintARegistration:

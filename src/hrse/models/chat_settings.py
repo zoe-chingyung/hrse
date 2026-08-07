@@ -4,10 +4,12 @@ Sprint 6  — Group onboarding & language.
 Sprint 5B — Per-chat task profile & onboarding state machine.
 Sprint 5D — Per-task profiles (dict keyed by TASK_REGISTRY key, not a
             single laundry-only profile).
+Sprint C  — Button-driven onboarding: multi-select task picker + per-task
+            button config, replacing the typed ``/setup`` conversation.
 
 Each Telegram chat (private or group) can carry its own settings: display
 language, a per-task-keyed dict of ``TaskProfile`` overrides, and the
-transient state for an in-progress ``/setup`` conversation.
+transient state for an in-progress button onboarding conversation.
 """
 
 from __future__ import annotations
@@ -74,6 +76,11 @@ class TaskProfile(BaseModel):
     timezone: str | None = Field(
         default=None, description="IANA timezone for this chat's display, or None to use global"
     )
+    weather_aware: bool = Field(
+        default=True,
+        description="Whether this task's recommendation is gated by the weather forecast "
+        "(UV/rain). True for laundry; False for indoor tasks like dishwasher/EV charging.",
+    )
 
     @field_validator("earliest_start", "latest_finish")
     @classmethod
@@ -139,7 +146,35 @@ class ChatSettings(BaseModel):
         default_factory=dict, description="Per-task constraints, keyed by TASK_REGISTRY key"
     )
     onboarding_step: int | None = Field(
-        default=None, description="Current /setup question index, or None if not onboarding"
+        default=None,
+        description="Postcode-step marker (0) while resolving the region during onboarding, "
+        "or None once resolved / when not onboarding. Distinct from onboarding_task_step, "
+        "which tracks per-task button-config progress.",
+    )
+    onboarding_stage: str | None = Field(
+        default=None,
+        description="Which phase of the button onboarding flow is active: 'postcode', "
+        "'tasks' (multi-select picker), 'config' (per-task button questions), or None when "
+        "no onboarding conversation is in progress.",
+    )
+    pending_task_selection: list[str] = Field(
+        default_factory=list,
+        description="TASK_REGISTRY keys currently toggled on in the multi-select task picker, "
+        "before 'Done' is pressed. Transient — cleared once selection is locked in.",
+    )
+    pending_config_queue: list[str] = Field(
+        default_factory=list,
+        description="TASK_REGISTRY keys still awaiting per-task button config, in onboarding "
+        "order. The first entry is the task currently being configured.",
+    )
+    onboarding_task_step: int = Field(
+        default=0,
+        description="Index into the current task's button-question list (pending_config_queue[0]).",
+    )
+    awaiting_typed_field: str | None = Field(
+        default=None,
+        description="TaskProfile field name awaiting a typed 'Other' answer during per-task "
+        "config, or None when the next reply should not be treated as such.",
     )
     enabled_tasks: list[str] = Field(
         default_factory=lambda: ["laundry"],

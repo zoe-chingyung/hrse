@@ -6,17 +6,20 @@ and dispatches to the correct handler. It understands three update types:
 * ``my_chat_member`` — the bot's own membership changed. When the bot has
   just been added to a chat, the bilingual welcome flow starts. This update
   is delivered even with group privacy mode enabled.
-* ``callback_query`` — inline-keyboard button presses (language selection).
+* ``callback_query`` — inline-keyboard button presses: language, region,
+  task multi-select (toggle/done), and per-task config answers.
 * ``message`` — slash commands. In groups Telegram appends the bot's
   username (``/summary@MyBot``); the suffix is stripped before matching.
-  Plain text from a chat with an active ``/setup`` conversation is routed
-  to the onboarding answer handler instead of the unknown-command fallback.
+  Plain text from a chat with an active onboarding conversation (postcode,
+  or a config question's "Other" follow-up) is routed to the onboarding
+  answer handler instead of the unknown-command fallback.
 
 Sprint 2A commands: /health
 Sprint 2B commands: /laundry_done, /events, /summary
 Sprint 6  commands: /start, /language, /prices [tomorrow]
-Sprint 5B commands: /setup, /profile, /reset
-Sprint 5C commands: /tasks, /add_task, /remove_task
+Sprint C  commands: /profile, /reset, /tasks (read-only) — button-driven
+                    onboarding replaces the typed /setup conversation and
+                    retires /add_task, /remove_task.
 """
 
 from __future__ import annotations
@@ -28,9 +31,12 @@ from aws_lambda_powertools import Logger
 
 from hrse.models.chat_settings import Language
 from hrse.telegram.commands import (
+    CONFIG_CALLBACK_PREFIX,
     LANGUAGE_CALLBACK_PREFIX,
     REGION_CALLBACK_PREFIX,
-    handle_add_task,
+    TASK_DONE_CALLBACK_DATA,
+    TASK_TOGGLE_CALLBACK_PREFIX,
+    handle_config_callback,
     handle_events,
     handle_health,
     handle_language_callback,
@@ -40,11 +46,11 @@ from hrse.telegram.commands import (
     handle_prices,
     handle_profile,
     handle_region_callback,
-    handle_remove_task,
     handle_reset,
-    handle_setup_start,
     handle_start,
     handle_summary,
+    handle_task_done_callback,
+    handle_task_toggle_callback,
     handle_tasks,
     handle_unknown,
     handle_welcome,
@@ -154,6 +160,12 @@ def _route_callback_query(
         handle_language_callback(query=query, client=client, settings_store=settings_store)
     elif data.startswith(REGION_CALLBACK_PREFIX) and settings_store is not None:
         handle_region_callback(query=query, client=client, settings_store=settings_store)
+    elif data.startswith(TASK_TOGGLE_CALLBACK_PREFIX) and settings_store is not None:
+        handle_task_toggle_callback(query=query, client=client, settings_store=settings_store)
+    elif data == TASK_DONE_CALLBACK_DATA and settings_store is not None:
+        handle_task_done_callback(query=query, client=client, settings_store=settings_store)
+    elif data.startswith(CONFIG_CALLBACK_PREFIX) and settings_store is not None:
+        handle_config_callback(query=query, client=client, settings_store=settings_store)
     else:
         logger.warning("Unhandled callback query", extra={"data": data})
         client.answer_callback_query(callback_query_id=query.id)
@@ -202,15 +214,6 @@ def _route_message(
     elif command == "/language":
         handle_language_prompt(chat_id=chat_id, client=client)
 
-    elif command == "/setup":
-        if settings_store is None:
-            logger.error("No settings store available for /setup")
-            _service_unavailable(chat_id, client, lang)
-        else:
-            handle_setup_start(
-                chat_id=chat_id, client=client, settings_store=settings_store, lang=lang
-            )
-
     elif command == "/profile":
         if settings_store is None:
             logger.error("No settings store available for /profile")
@@ -231,24 +234,6 @@ def _route_message(
             _service_unavailable(chat_id, client, lang)
         else:
             handle_tasks(chat_id=chat_id, client=client, settings_store=settings_store, lang=lang)
-
-    elif command == "/add_task":
-        if settings_store is None:
-            logger.error("No settings store available for /add_task")
-            _service_unavailable(chat_id, client, lang)
-        else:
-            handle_add_task(
-                chat_id=chat_id, args=args, client=client, settings_store=settings_store, lang=lang
-            )
-
-    elif command == "/remove_task":
-        if settings_store is None:
-            logger.error("No settings store available for /remove_task")
-            _service_unavailable(chat_id, client, lang)
-        else:
-            handle_remove_task(
-                chat_id=chat_id, args=args, client=client, settings_store=settings_store, lang=lang
-            )
 
     elif command in ("/prices", "/prices_tomorrow"):
         if octopus is None:
@@ -289,7 +274,7 @@ def _route_message(
 
     elif (
         chat_settings is not None
-        and chat_settings.onboarding_step is not None
+        and chat_settings.onboarding_stage is not None
         and settings_store is not None
     ):
         handle_onboarding_answer(

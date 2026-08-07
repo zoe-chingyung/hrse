@@ -259,6 +259,32 @@ class TestHandleLanguageCallback:
         assert saved.onboarding_complete is True
         assert saved.enabled_tasks == ["laundry", "dishwasher"]
 
+    def test_fresh_chat_continues_into_postcode_step(self) -> None:
+        client = _mock_client()
+        store = InMemoryChatSettingsStore()
+
+        handle_language_callback(query=_callback("lang:en"), client=client, settings_store=store)
+
+        saved = store.get(-100123)
+        assert saved is not None
+        assert saved.onboarding_stage == "postcode"
+        _, kwargs = client.send_message.call_args
+        assert "postcode" in kwargs["text"].lower()
+
+    def test_already_onboarded_chat_does_not_restart_postcode_step(self) -> None:
+        client = _mock_client()
+        store = InMemoryChatSettingsStore()
+        store.save(
+            ChatSettings(chat_id=-100123, onboarding_complete=True, updated_at=datetime.now(tz=UTC))
+        )
+
+        handle_language_callback(query=_callback("lang:zh"), client=client, settings_store=store)
+
+        saved = store.get(-100123)
+        assert saved is not None
+        assert saved.onboarding_stage is None
+        client.send_message.assert_not_called()
+
     def test_switching_language_preserves_octopus_region_code(self) -> None:
         client = _mock_client()
         store = InMemoryChatSettingsStore()
@@ -282,6 +308,7 @@ class TestHandleRegionCallback:
     def _onboarding_settings(self, **overrides: object) -> ChatSettings:
         base: dict[str, object] = {
             "chat_id": -100123,
+            "onboarding_stage": "postcode",
             "onboarding_step": 0,
             "updated_at": datetime.now(tz=UTC),
         }
@@ -298,12 +325,12 @@ class TestHandleRegionCallback:
         saved = store.get(-100123)
         assert saved is not None
         assert saved.octopus_region_code == "C"
-        assert saved.onboarding_step == 1
+        assert saved.onboarding_stage == "tasks"
         client.answer_callback_query.assert_called_once_with(callback_query_id="cb-1")
         _, kwargs = client.edit_message_text.call_args
         assert "C" in kwargs["text"]
 
-    def test_advancing_sends_next_setup_question(self) -> None:
+    def test_advancing_sends_task_select_prompt(self) -> None:
         client = _mock_client()
         store = InMemoryChatSettingsStore()
         store.save(self._onboarding_settings())
@@ -311,7 +338,7 @@ class TestHandleRegionCallback:
         handle_region_callback(query=_callback("region:H"), client=client, settings_store=store)
 
         _, kwargs = client.send_message.call_args
-        assert "2/7" in kwargs["text"]
+        assert kwargs["reply_markup"]["inline_keyboard"]
 
     def test_unknown_letter_only_answers(self) -> None:
         client = _mock_client()
@@ -350,7 +377,7 @@ class TestHandleRegionCallback:
     def test_stale_press_after_onboarding_moved_past_postcode_is_ignored(self) -> None:
         client = _mock_client()
         store = InMemoryChatSettingsStore()
-        store.save(self._onboarding_settings(onboarding_step=3))
+        store.save(self._onboarding_settings(onboarding_stage="tasks", onboarding_step=None))
 
         handle_region_callback(query=_callback("region:C"), client=client, settings_store=store)
 
@@ -359,7 +386,7 @@ class TestHandleRegionCallback:
         saved = store.get(-100123)
         assert saved is not None
         assert saved.octopus_region_code is None
-        assert saved.onboarding_step == 3
+        assert saved.onboarding_stage == "tasks"
 
     def test_preserves_existing_profiles_and_enabled_tasks(self) -> None:
         from hrse.models.chat_settings import TaskProfile

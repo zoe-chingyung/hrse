@@ -141,9 +141,10 @@ class DecisionService:
         reasons = [
             "laundry target not met",
             f"wash cost within budget ({config.wash_budget_pence}p)",
-            f"UV index above {config.min_uv}",
-            f"rain probability below {config.max_rain_probability}%",
         ]
+        if config.weather_aware:
+            reasons.append(f"UV index above {config.min_uv}")
+            reasons.append(f"rain probability below {config.max_rain_probability}%")
         logger.info(
             "Task recommended",
             extra={
@@ -166,7 +167,14 @@ class DecisionService:
 
     @staticmethod
     def _weather_failures(forecast: DailyForecast, config: FlexibleTaskConfig) -> list[str]:
-        """Return reasons the weather fails the gate, or an empty list if it passes."""
+        """Return reasons the weather fails the gate, or an empty list if it passes.
+
+        Tasks with ``weather_aware=False`` (e.g. dishwasher, EV charging) skip the
+        gate entirely regardless of the forecast — they run indoors or are
+        otherwise unaffected by sun/rain.
+        """
+        if not config.weather_aware:
+            return []
         reasons: list[str] = []
         if forecast.uv_index <= config.min_uv:
             reasons.append(f"UV index too low ({forecast.uv_index} <= {config.min_uv})")

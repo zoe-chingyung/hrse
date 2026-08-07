@@ -40,25 +40,12 @@ class MessageKey(StrEnum):
     NO_EVENTS = auto()
     RECENT_EVENTS_HEADER = auto()
     WEEKLY_SUMMARY = auto()
-    SETUP_Q_LAUNDRY_TARGET = auto()
-    SETUP_Q_EARLIEST_START = auto()
-    SETUP_Q_LATEST_FINISH = auto()
-    SETUP_Q_OUTDOOR_DRYING = auto()
-    SETUP_Q_TIMEZONE = auto()
-    SETUP_Q_WASH_BUDGET = auto()
     SETUP_INVALID_ANSWER = auto()
-    SETUP_DONE = auto()
     PROFILE_HEADER = auto()
+    PROFILE_TASK_BLOCK = auto()
     PROFILE_NONE = auto()
     RESET_DONE = auto()
     TASKS_LIST = auto()
-    TASK_USAGE_ADD = auto()
-    TASK_USAGE_REMOVE = auto()
-    TASK_UNKNOWN = auto()
-    TASK_ALREADY_ENABLED = auto()
-    TASK_ADDED = auto()
-    TASK_NOT_ENABLED = auto()
-    TASK_REMOVED = auto()
     PRICE_BAR_CHART_TITLE = auto()
     PRICE_BAR_CHART_TITLE_TOMORROW = auto()
     PRICE_BAR_CHART_FOOTER = auto()
@@ -68,6 +55,24 @@ class MessageKey(StrEnum):
     SETUP_Q_POSTCODE = auto()
     SETUP_REGION_CONFIRMED = auto()
     SETUP_REGION_LOOKUP_FAILED = auto()
+    # Sprint C — button-driven onboarding
+    SETUP_Q_TASK_SELECT = auto()
+    SETUP_TASKS_NONE_SELECTED = auto()
+    SETUP_TASKS_LOCKED = auto()
+    SETUP_Q_TARGET_RUNS = auto()
+    SETUP_Q_DURATION = auto()
+    SETUP_Q_BUDGET = auto()
+    SETUP_Q_EARLIEST = auto()
+    SETUP_Q_LATEST = auto()
+    SETUP_Q_OUTDOOR_DRYING = auto()
+    SETUP_Q_MIN_UV = auto()
+    SETUP_Q_MAX_RAIN = auto()
+    SETUP_Q_TIMEZONE = auto()
+    SETUP_Q_EV_DURATION = auto()
+    SETUP_TYPE_YOUR_ANSWER = auto()
+    SETUP_OPTION_CONFIRMED = auto()
+    SETUP_USE_BUTTONS_HINT = auto()
+    SETUP_COMPLETE_SUMMARY = auto()
 
 
 _COMMANDS_EN = (
@@ -77,12 +82,9 @@ _COMMANDS_EN = (
     "/laundry_done — record a laundry run\n"
     "/summary — weekly household summary\n"
     "/events — recent events\n"
-    "/setup — configure your laundry preferences\n"
     "/profile — show your current settings\n"
-    "/reset — clear your settings (use global defaults)\n"
     "/tasks — list your active tasks\n"
-    "/add_task — enable a task (laundry, dishwasher, ev)\n"
-    "/remove_task — disable a task\n"
+    "/reset — clear your settings and redo setup\n"
     "/language — change language\n"
     "/health — service status"
 )
@@ -94,12 +96,9 @@ _COMMANDS_ZH = (
     "/laundry_done — 記錄一次洗衫\n"
     "/summary — 每週家居摘要\n"
     "/events — 最近事件\n"
-    "/setup — 設定你嘅洗衫偏好\n"
     "/profile — 查看你而家嘅設定\n"
-    "/reset — 清除你嘅設定(用返預設值)\n"
     "/tasks — 查看你已啟用嘅任務\n"
-    "/add_task — 啟用任務(laundry、dishwasher、ev)\n"
-    "/remove_task — 停用任務\n"
+    "/reset — 清除你嘅設定並重新設定\n"
     "/language — 更改語言\n"
     "/health — 服務狀態"
 )
@@ -192,130 +191,43 @@ _CATALOGUE: dict[MessageKey, dict[Language, str]] = {
             "今週事件:<b>{total_events}</b>"
         ),
     },
-    MessageKey.SETUP_Q_LAUNDRY_TARGET: {
-        Language.EN: (
-            "🛠 <b>Setup ({step}/{total})</b>\n"
-            "How many laundry runs per week do you want? (e.g. <code>2</code>)"
-        ),
-        Language.ZH: (
-            "🛠 <b>設定 ({step}/{total})</b>\n" "你想每星期洗幾多次衫?(例如 <code>2</code>)"
-        ),
-    },
-    MessageKey.SETUP_Q_EARLIEST_START: {
-        Language.EN: (
-            "🛠 <b>Setup ({step}/{total})</b>\n"
-            "Earliest time a run can start? 24h <code>HH:MM</code> (e.g. <code>08:00</code>)"
-        ),
-        Language.ZH: (
-            "🛠 <b>設定 ({step}/{total})</b>\n"
-            "最早幾點可以開始洗?24小時制 <code>HH:MM</code>(例如 <code>08:00</code>)"
-        ),
-    },
-    MessageKey.SETUP_Q_LATEST_FINISH: {
-        Language.EN: (
-            "🛠 <b>Setup ({step}/{total})</b>\n"
-            "Latest time a run must finish by? 24h <code>HH:MM</code> (e.g. <code>22:00</code>)"
-        ),
-        Language.ZH: (
-            "🛠 <b>設定 ({step}/{total})</b>\n"
-            "最遲幾點要洗完?24小時制 <code>HH:MM</code>(例如 <code>22:00</code>)"
-        ),
-    },
-    MessageKey.SETUP_Q_OUTDOOR_DRYING: {
-        Language.EN: (
-            "🛠 <b>Setup ({step}/{total})</b>\n"
-            "Do you dry laundry outdoors? Reply <code>yes</code> or <code>no</code>"
-        ),
-        Language.ZH: (
-            "🛠 <b>設定 ({step}/{total})</b>\n"
-            "你係咪喺室外晾衫?回覆 <code>yes</code> 或 <code>no</code>"
-        ),
-    },
-    MessageKey.SETUP_Q_TIMEZONE: {
-        Language.EN: (
-            "🛠 <b>Setup ({step}/{total})</b>\n"
-            "Your IANA timezone? (e.g. <code>Europe/London</code>)"
-        ),
-        Language.ZH: (
-            "🛠 <b>設定 ({step}/{total})</b>\n" "你嘅 IANA 時區?(例如 <code>Europe/London</code>)"
-        ),
-    },
-    MessageKey.SETUP_Q_WASH_BUDGET: {
-        Language.EN: (
-            "🛠 <b>Setup ({step}/{total})</b>\n"
-            "Max budget per wash, in pence? (e.g. <code>40</code>)"
-        ),
-        Language.ZH: (
-            "🛠 <b>設定 ({step}/{total})</b>\n" "每次洗衫嘅預算上限,幾多便士?(例如 <code>40</code>)"
-        ),
-    },
     MessageKey.SETUP_INVALID_ANSWER: {
         Language.EN: "⚠️ Didn't understand that — please try again.",
         Language.ZH: "⚠️ 唔明你個答案,請再試一次。",
     },
-    MessageKey.SETUP_DONE: {
-        Language.EN: "✅ <b>Setup complete!</b> Run /profile to see your settings.",
-        Language.ZH: "✅ <b>設定完成!</b>用 /profile 睇返你嘅設定。",
-    },
     MessageKey.PROFILE_HEADER: {
+        Language.EN: "⚙️ <b>Your Settings</b>{blocks}\n\nUse /reset to clear everything and start over.",
+        Language.ZH: "⚙️ <b>你嘅設定</b>{blocks}\n\n用 /reset 清除晒重新開始。",
+    },
+    MessageKey.PROFILE_TASK_BLOCK: {
         Language.EN: (
-            "⚙️ <b>Your Settings</b>\n"
-            "Laundry target: <b>{target}</b>/week\n"
+            "\n\n<b>{task}</b>\n"
+            "Target: {target}/week\n"
+            "Duration: {duration}\n"
             "Window: {earliest}–{latest}\n"
-            "Budget: <b>{budget}p</b>/wash\n"
-            "Outdoor drying: {outdoor}\n"
-            "Timezone: {timezone}\n\n"
-            "Use /reset to clear these and use global defaults."
+            "Budget: {budget}p\n"
+            "Weather-aware: {weather}"
         ),
         Language.ZH: (
-            "⚙️ <b>你嘅設定</b>\n"
-            "洗衫目標:每星期 <b>{target}</b> 次\n"
+            "\n\n<b>{task}</b>\n"
+            "目標:每星期 {target} 次\n"
+            "時長:{duration}\n"
             "時段:{earliest}–{latest}\n"
-            "預算:每次 <b>{budget}p</b>\n"
-            "室外晾衫:{outdoor}\n"
-            "時區:{timezone}\n\n"
-            "用 /reset 清除呢啲設定,改用全域預設值。"
+            "預算:{budget}p\n"
+            "睇天氣:{weather}"
         ),
     },
     MessageKey.PROFILE_NONE: {
-        Language.EN: "⚙️ No personal settings yet — using global defaults.\nRun /setup to configure.",
-        Language.ZH: "⚙️ 未有個人設定,而家用緊全域預設值。\n用 /setup 開始設定。",
+        Language.EN: "⚙️ No tasks configured yet. Run /reset to start setup.",
+        Language.ZH: "⚙️ 未有任何已設定嘅任務。用 /reset 開始設定。",
     },
     MessageKey.RESET_DONE: {
-        Language.EN: "🔄 Your settings have been cleared. Using global defaults now.",
-        Language.ZH: "🔄 你嘅設定已經清除,而家用緊全域預設值。",
+        Language.EN: "🔄 Your settings have been cleared. Let's set up again.",
+        Language.ZH: "🔄 你嘅設定已經清除,我哋再設定一次。",
     },
     MessageKey.TASKS_LIST: {
         Language.EN: "📋 <b>Your Active Tasks</b>\n{tasks}",
         Language.ZH: "📋 <b>你已啟用嘅任務</b>\n{tasks}",
-    },
-    MessageKey.TASK_USAGE_ADD: {
-        Language.EN: "Usage: <code>/add_task laundry|dishwasher|ev</code>",
-        Language.ZH: "用法:<code>/add_task laundry|dishwasher|ev</code>",
-    },
-    MessageKey.TASK_USAGE_REMOVE: {
-        Language.EN: "Usage: <code>/remove_task laundry|dishwasher|ev</code>",
-        Language.ZH: "用法:<code>/remove_task laundry|dishwasher|ev</code>",
-    },
-    MessageKey.TASK_UNKNOWN: {
-        Language.EN: "⚠️ Unknown task <code>{task}</code>. Valid: {valid}",
-        Language.ZH: "⚠️ 未知任務 <code>{task}</code>。可用:{valid}",
-    },
-    MessageKey.TASK_ALREADY_ENABLED: {
-        Language.EN: "{task} is already enabled.",
-        Language.ZH: "{task} 已經啟用咗。",
-    },
-    MessageKey.TASK_ADDED: {
-        Language.EN: "✅ {task} enabled.",
-        Language.ZH: "✅ {task} 已啟用。",
-    },
-    MessageKey.TASK_NOT_ENABLED: {
-        Language.EN: "{task} isn't enabled.",
-        Language.ZH: "{task} 未啟用。",
-    },
-    MessageKey.TASK_REMOVED: {
-        Language.EN: "❌ {task} disabled.",
-        Language.ZH: "❌ {task} 已停用。",
     },
     MessageKey.PRICE_BAR_CHART_TITLE: {
         Language.EN: "⚡ Today's prices",
@@ -346,13 +258,12 @@ _CATALOGUE: dict[MessageKey, dict[Language, str]] = {
     },
     MessageKey.SETUP_Q_POSTCODE: {
         Language.EN: (
-            "🛠 <b>Setup ({step}/{total})</b>\n"
+            "🛠 <b>Setup</b>\n"
             "What's your postcode? I'll use it to find your electricity "
             "pricing region (e.g. <code>SW1A 1AA</code>)."
         ),
         Language.ZH: (
-            "🛠 <b>設定 ({step}/{total})</b>\n"
-            "你嘅郵政編號係?我會用嚟搵你嘅電價地區(例如 <code>SW1A 1AA</code>)。"
+            "🛠 <b>設定</b>\n" "你嘅郵政編號係?我會用嚟搵你嘅電價地區(例如 <code>SW1A 1AA</code>)。"
         ),
     },
     MessageKey.SETUP_REGION_CONFIRMED: {
@@ -365,6 +276,101 @@ _CATALOGUE: dict[MessageKey, dict[Language, str]] = {
             "try entering the postcode again."
         ),
         Language.ZH: "⚠️ 搵唔到呢個郵政編號。喺下面揀返你嘅地區,或者再輸入一次郵政編號。",
+    },
+    MessageKey.SETUP_Q_TASK_SELECT: {
+        Language.EN: (
+            "🛠 <b>Setup</b>\n"
+            "Which tasks do you want recommendations for? Tap to select, then Done."
+        ),
+        Language.ZH: "🛠 <b>設定</b>\n你想要邊啲任務嘅建議?揀完撳「完成」。",
+    },
+    MessageKey.SETUP_TASKS_NONE_SELECTED: {
+        Language.EN: "⚠️ Pick at least one task before continuing.",
+        Language.ZH: "⚠️ 揀最少一個任務先可以繼續。",
+    },
+    MessageKey.SETUP_TASKS_LOCKED: {
+        Language.EN: "✅ Tasks selected: {tasks}",
+        Language.ZH: "✅ 已揀任務:{tasks}",
+    },
+    MessageKey.SETUP_Q_TARGET_RUNS: {
+        Language.EN: "🛠 <b>{task} setup ({step}/{total})</b>\nHow many times per week?",
+        Language.ZH: "🛠 <b>{task} 設定 ({step}/{total})</b>\n每星期想要幾多次?",
+    },
+    MessageKey.SETUP_Q_DURATION: {
+        Language.EN: (
+            "🛠 <b>{task} setup ({step}/{total})</b>\n"
+            "How long does one run take? (Other: type a number of 30-min "
+            "slots, e.g. <code>4</code> = 2h)"
+        ),
+        Language.ZH: (
+            "🛠 <b>{task} 設定 ({step}/{total})</b>\n"
+            "一次要用幾耐?(其他:輸入 30 分鐘為單位嘅格數,例如 <code>4</code> = 2 小時)"
+        ),
+    },
+    MessageKey.SETUP_Q_BUDGET: {
+        Language.EN: "🛠 <b>{task} setup ({step}/{total})</b>\nMax budget per run, in pence?",
+        Language.ZH: "🛠 <b>{task} 設定 ({step}/{total})</b>\n每次嘅預算上限,幾多便士?",
+    },
+    MessageKey.SETUP_Q_EARLIEST: {
+        Language.EN: "🛠 <b>{task} setup ({step}/{total})</b>\nEarliest time a run can start?",
+        Language.ZH: "🛠 <b>{task} 設定 ({step}/{total})</b>\n最早幾點可以開始?",
+    },
+    MessageKey.SETUP_Q_LATEST: {
+        Language.EN: "🛠 <b>{task} setup ({step}/{total})</b>\nLatest time a run must finish by?",
+        Language.ZH: "🛠 <b>{task} 設定 ({step}/{total})</b>\n最遲幾點要完成?",
+    },
+    MessageKey.SETUP_Q_OUTDOOR_DRYING: {
+        Language.EN: "🛠 <b>{task} setup ({step}/{total})</b>\nDo you dry laundry outdoors?",
+        Language.ZH: "🛠 <b>{task} 設定 ({step}/{total})</b>\n你係咪喺室外晾衫?",
+    },
+    MessageKey.SETUP_Q_MIN_UV: {
+        Language.EN: (
+            "🛠 <b>{task} setup ({step}/{total})</b>\n"
+            "Minimum UV index to recommend a run? (only above this)"
+        ),
+        Language.ZH: "🛠 <b>{task} 設定 ({step}/{total})</b>\nUV 指數要高過幾多先建議?",
+    },
+    MessageKey.SETUP_Q_MAX_RAIN: {
+        Language.EN: "🛠 <b>{task} setup ({step}/{total})</b>\nMax acceptable rain probability?",
+        Language.ZH: "🛠 <b>{task} 設定 ({step}/{total})</b>\n最高可以接受幾多% 落雨機率?",
+    },
+    MessageKey.SETUP_Q_TIMEZONE: {
+        Language.EN: "🛠 <b>{task} setup ({step}/{total})</b>\nYour IANA timezone?",
+        Language.ZH: "🛠 <b>{task} 設定 ({step}/{total})</b>\n你嘅 IANA 時區?",
+    },
+    MessageKey.SETUP_Q_EV_DURATION: {
+        Language.EN: (
+            "🛠 <b>{task} setup</b>\n"
+            "How long do you want to charge for? I'll find the cheapest "
+            "contiguous window of that length."
+        ),
+        Language.ZH: "🛠 <b>{task} 設定</b>\n想充幾耐?我會搵嗰段長度入面最平嘅連續時段。",
+    },
+    MessageKey.SETUP_TYPE_YOUR_ANSWER: {
+        Language.EN: "✏️ Type your answer below:",
+        Language.ZH: "✏️ 喺下面打你嘅答案:",
+    },
+    MessageKey.SETUP_OPTION_CONFIRMED: {
+        Language.EN: "✅ {label}",
+        Language.ZH: "✅ {label}",
+    },
+    MessageKey.SETUP_USE_BUTTONS_HINT: {
+        Language.EN: "🔘 Please use the buttons above to continue setup.",
+        Language.ZH: "🔘 請用返上面嘅按鈕繼續設定。",
+    },
+    MessageKey.SETUP_COMPLETE_SUMMARY: {
+        Language.EN: (
+            "✅ <b>Setup complete!</b>\n"
+            "Your tasks: {tasks}\n\n"
+            "📅 You'll get a plan around 16:45 UTC each day, and a reminder "
+            "around 08:00 UTC. Run /profile to review, /reset to start over."
+        ),
+        Language.ZH: (
+            "✅ <b>設定完成!</b>\n"
+            "你嘅任務:{tasks}\n\n"
+            "📅 每日大約 UTC 16:45 會收到計劃,UTC 08:00 會有提示。"
+            "用 /profile 睇返設定,/reset 可以重新開始。"
+        ),
     },
 }
 

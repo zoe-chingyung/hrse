@@ -84,14 +84,20 @@ class TelegramClientProtocol(Protocol):
         message_id: int,
         text: str,
         parse_mode: str = "HTML",
+        reply_markup: dict[str, Any] | None = None,
     ) -> None:
-        """Replace the text (and keyboard) of an existing bot message.
+        """Replace the text of an existing bot message.
+
+        Omitting ``reply_markup`` also removes any inline keyboard the
+        message had; passing one (e.g. an updated multi-select checklist)
+        keeps the message interactive.
 
         Args:
             chat_id:    Telegram chat identifier.
             message_id: Identifier of the message to edit.
             text:       New message body.
             parse_mode: Telegram parse mode, defaults to "HTML".
+            reply_markup: Optional InlineKeyboardMarkup as a plain dict.
 
         Raises:
             TelegramApiError: If the Telegram API returns a non-2xx response.
@@ -179,30 +185,33 @@ class HttpTelegramClient:
         message_id: int,
         text: str,
         parse_mode: str = "HTML",
+        reply_markup: dict[str, Any] | None = None,
     ) -> None:
         """POST ``editMessageText`` to replace an existing message's body.
 
         Editing without ``reply_markup`` also removes any inline keyboard,
-        which is exactly what the onboarding flow wants after a choice.
+        which is what a locked-in onboarding choice wants. Passing one keeps
+        the message interactive (e.g. an updated multi-select checklist).
 
         Args:
             chat_id:    Telegram chat identifier.
             message_id: Identifier of the message to edit.
             text:       New message body.
             parse_mode: Telegram parse mode, defaults to "HTML".
+            reply_markup: Optional InlineKeyboardMarkup as a plain dict.
 
         Raises:
             TelegramApiError: If the API returns error JSON or a non-2xx status.
         """
-        self._post(
-            "editMessageText",
-            {
-                "chat_id": chat_id,
-                "message_id": message_id,
-                "text": text,
-                "parse_mode": parse_mode,
-            },
-        )
+        payload: dict[str, Any] = {
+            "chat_id": chat_id,
+            "message_id": message_id,
+            "text": text,
+            "parse_mode": parse_mode,
+        }
+        if reply_markup is not None:
+            payload["reply_markup"] = reply_markup
+        self._post("editMessageText", payload)
         logger.info("Telegram message edited", extra={"chat_id": chat_id})
 
     # ------------------------------------------------------------------
