@@ -23,6 +23,7 @@ The system recommends — it does not control appliances.
 | Sprint 5C | Generic `FlexibleTaskConfig`, task registry, `/tasks` `/add_task` `/remove_task` | ✅ Done |
 | Sprint A | Multi-user registration — S3 is the recipient source of truth, invite-only `/start <code>` gate | ✅ Done |
 | Sprint B | Per-region pricing — postcode → GSP region at onboarding, daily job fetches prices once per region | ✅ Done |
+| Sprint C | Button task onboarding (laundry/dishwasher/EV) — multi-select picker + per-task button config replaces typed `/setup` | ✅ Done |
 
 ---
 
@@ -224,16 +225,13 @@ Version: 0.1.0
 
 | Command | Action |
 |---|---|
-| `/start <code>` | Register this chat (invite-only) — correct code starts the bilingual welcome + language picker |
-| `/language` | Change the chat's language (English / 中文) |
+| `/start <code>` | Register this chat (invite-only) — correct code starts the bilingual welcome + language picker, which flows straight into button onboarding |
+| `/language` | Change the chat's language (English / 中文) — only restarts onboarding if the chat hasn't finished it yet |
 | `/prices` | Today's Agile prices — cheapest-window bar chart |
 | `/prices_tomorrow` | Tomorrow's prices (published ~16:00 UK time) |
-| `/setup` | Configure this chat's region + laundry preferences (postcode, then a 6-question conversation) |
-| `/profile` | Show this chat's current settings, or a hint to run `/setup` |
-| `/reset` | Clear this chat's settings — revert to the global defaults |
-| `/tasks` | List which tasks (laundry, dishwasher, ev) this chat gets recommendations for |
-| `/add_task <name>` | Enable a task (`laundry`, `dishwasher`, or `ev`) |
-| `/remove_task <name>` | Disable a task |
+| `/profile` | Show this chat's current settings, one block per configured task |
+| `/reset` | Wipe this chat's task setup and restart the button onboarding flow from the top |
+| `/tasks` | Read-only list of which tasks (laundry, dishwasher, ev) this chat gets recommendations for — change it with `/reset` |
 | `/health` | Service status check |
 | `/laundry_done` | Record a completed laundry run |
 | `/events` | Last 10 events with timestamps |
@@ -252,13 +250,20 @@ the definition of "registered recipient". Nothing else grants that status:
 2. **Correct code** → a fresh `ChatSettings` is saved
    (`onboarding_complete: false`) and the bilingual welcome + language
    picker starts, same as before.
-3. **`/setup`** — postcode/region first (see
-   [Per-region pricing](#per-region-pricing) below), then the existing
-   6-question laundry conversation. Its final answer sets
-   `onboarding_complete: true`, which is what makes the chat a daily
-   notification recipient (see [Architecture](docs/architecture.md)).
-4. **`/reset`** clears `onboarding_complete` back to `false`, dropping the
-   chat from notifications until it completes `/setup` again.
+3. **Button onboarding** (Sprint C) — picking a language continues straight
+   into: postcode/region (see [Per-region pricing](#per-region-pricing)
+   below) → a multi-select task picker (🧺 laundry / 🍽 dishwasher / 🔌 EV,
+   at least one required, toggled with inline buttons and locked in with
+   "Done") → per-task button config, one task at a time. Finishing the last
+   selected task's questions sets `onboarding_complete: true`, which is what
+   makes the chat a daily notification recipient (see
+   [Architecture](docs/architecture.md)). There's no typed `/setup`
+   conversation and no add/remove-task commands — every selection happens
+   once, up front; changing your mind means `/reset`.
+4. **`/reset`** wipes `profiles`/`enabled_tasks`, clears `onboarding_complete`
+   back to `false`, and restarts the whole button flow from the language
+   picker — dropping the chat from notifications until it completes setup
+   again.
 
 Being added to a group (`my_chat_member`) still sends the bilingual welcome
 keyboard, same as always — but joining a group does **not** register it;
@@ -267,9 +272,9 @@ someone still has to run `/start <code>` in that chat.
 ### Per-region pricing
 
 Octopus Agile prices differ by grid supply point (GSP) region — the trailing
-letter of a tariff code, e.g. `E-1R-AGILE-24-10-01-C` for London. `/setup`'s
-first question (step 1) asks for a postcode and resolves it to a region via
-Octopus's public GSP lookup API:
+letter of a tariff code, e.g. `E-1R-AGILE-24-10-01-C` for London. Button
+onboarding's first question after language is the postcode, resolved to a
+region via Octopus's public GSP lookup API:
 
 - **Lookup succeeds** → the region is confirmed and onboarding continues to
   the usual laundry questions.
@@ -278,7 +283,8 @@ Octopus's public GSP lookup API:
   postcode to retry the lookup.
 
 A chat cannot complete onboarding without a region — it's the first
-question, and every later question is gated behind answering it. The daily
+question after language, and every later step is gated behind answering it.
+The daily
 job fetches prices **once per distinct region** among that day's recipients
 (not once per chat, and not once globally) — see
 [docs/architecture.md](docs/architecture.md) for the grouping logic and its
@@ -302,42 +308,51 @@ across GMT/BST). Scheduled notifications follow the same precedence.
 Every laundry threshold has three possible sources, resolved in this order
 by `LaundryTaskConfig.from_profile_or_settings()`:
 
-1. **Per-chat profile** — set via `/setup`, stored as `ChatSettings.profile`
-   (a `TaskProfile`). Wins whenever present.
+1. **Per-chat profile** — set via button onboarding, stored in
+   `ChatSettings.profiles["laundry"]` (a `TaskProfile`). Wins whenever present.
 2. **Global `Settings`** (env vars, see below) — used by any chat that
-   hasn't run `/setup`.
+   hasn't configured laundry (e.g. it never selected the task).
 3. **Field defaults** baked into `LaundryTaskConfig` itself — the final
    fallback if neither of the above is set.
 
-A chat's `/setup` answers cover 6 of the constraints (laundry target,
-earliest/latest time, outdoor drying, timezone, wash budget); the rest
-(`duration_slots`, `machine_kwh`, `min_uv`, `max_rain_probability`) always
-come from the global `Settings` defaults, even for a chat with a profile —
-`/setup` intentionally stays short. (Postcode/region is asked first but
-isn't a `TaskProfile` field — it's stored directly on
+Laundry's button flow covers 9 fields (target/week, duration, budget,
+earliest/latest time, outdoor drying, UV/rain thresholds, timezone); each
+question offers preset buttons plus an "Other" fallback for typed entry.
+(Postcode/region is asked once, before task selection, and isn't a
+`TaskProfile` field — it's stored directly on
 `ChatSettings.octopus_region_code`, see
 [Per-region pricing](#per-region-pricing).)
 
 ### Multi-task support
 
-Beyond laundry, HRSE ships two more flexible-task types out of the box:
+Beyond laundry, HRSE ships two more flexible-task types out of the box, all
+selectable in the same onboarding pass:
 
-| Registry key | Config class | Notes |
-|---|---|---|
-| `laundry` | `LaundryTaskConfig` | The original task; supports per-chat profiles via `/setup` |
-| `dishwasher` | `DishwasherConfig` | Shorter cycle, no weather gate (runs indoors) |
-| `ev` | `EVChargingConfig` | Long overnight session, no weather gate |
+| Registry key | Config class | Onboarding questions | Weather-aware |
+|---|---|---|---|
+| `laundry` | `LaundryTaskConfig` | 9 (full button flow, see above) | ✅ Yes |
+| `dishwasher` | `DishwasherConfig` | 6 (no weather questions) | ❌ No — runs indoors |
+| `ev` | `EVChargingConfig` | 1 (charge duration only: 4h/6h/8h/10h) | ❌ No |
 
-Every chat's enabled tasks are tracked in `ChatSettings.enabled_tasks`
-(default `["laundry"]`, so existing chats are unaffected). Manage them with
-`/tasks`, `/add_task <name>`, `/remove_task <name>`. The scheduler runs
-`DecisionService.evaluate()` once per enabled task and sends one Telegram
-message with a block per task — a chat with only laundry enabled still gets
-the original single-block message.
+A chat picks its tasks **once**, all at once, via the multi-select button
+picker during onboarding (see [Registration](#registration-invite-only));
+there's no add/remove-task command — changing the set means `/reset`. Each
+selected task then gets its own button-driven config pass, stored in
+`ChatSettings.profiles[key]`; `enabled_tasks` mirrors the same keys. The
+scheduler runs `DecisionService.evaluate()` once per enabled task and sends
+one Telegram message with a block per task — a chat with only laundry
+enabled still gets the original single-block message.
 
-`dishwasher` and `ev` currently use their built-in defaults only; unlike
-laundry there's no onboarding flow or env-driven config for them yet — see
-`TASK_REGISTRY` in `src/hrse/models/task_config.py` if you want to add one.
+`weather_aware` (on both `TaskProfile` and every `FlexibleTaskConfig`) is
+what makes dishwasher/EV weather-blind: `DecisionService` skips the UV/rain
+gate entirely when it's `False`, rather than relying on permissive
+threshold defaults. EV also skips duration/budget/window questions — it
+asks only charge length, then searches the **whole day** (no deadline) for
+the cheapest contiguous window of that length, reusing the same
+window-search/ranking logic as laundry and dishwasher (see
+[Architecture §13](docs/architecture.md)). EV kWh-based cost and a
+configurable deadline are deliberately deferred — see
+[Roadmap](docs/roadmap.md).
 
 ### Daily notifications
 
@@ -371,8 +386,8 @@ Reasons:
 Reply /laundry_done when finished.
 ```
 
-With more than one task enabled (`/add_task dishwasher`), the message
-gains one block per task instead:
+With more than one task selected during onboarding, the message gains one
+block per task instead:
 ```
 🏠 Tomorrow's Energy Plan
 
@@ -441,7 +456,7 @@ hrse/
 │   │   ├── schedule_handler.py   # EventBridge → fetch → decide → notify (per enabled task)
 │   │   └── telegram_handler.py   # Webhook → command router
 │   ├── models/
-│   │   ├── chat_settings.py      # ChatSettings, TaskProfile, onboarding_step, enabled_tasks
+│   │   ├── chat_settings.py      # ChatSettings (button-onboarding state machine fields), TaskProfile
 │   │   ├── task_config.py        # FlexibleTaskConfig Protocol, Laundry/Dishwasher/EV configs, TASK_REGISTRY
 │   │   └── ...                   # pricing, weather, recommendation
 │   ├── services/
@@ -449,7 +464,7 @@ hrse/
 │   │   ├── notification.py       # Telegram formatter — format() single-task, format_multi() per-task blocks
 │   │   └── weekly_state.py       # Weekly event aggregation
 │   ├── store/              # S3 event + chat-settings stores + Protocols
-│   ├── telegram/           # Bot client, commands (incl. /setup, /tasks), router, token/chat_id providers
+│   ├── telegram/           # Bot client, commands (button onboarding, /profile, /reset, /tasks), router
 │   └── utils/datetime_utils.py   # utcnow, to_iso8601, parse_hhmm (shared HH:MM parsing)
 ├── tests/unit/             # 400+ tests, 95%+ coverage
 ├── infra/                  # Terraform (Lambda, EventBridge, S3, API Gateway, IAM)
@@ -474,7 +489,8 @@ hrse/
 | S3 read-modify-write, no concurrency control | Could lose events if two Lambdas write simultaneously | Low risk now; fix before scaling |
 | ~~Recipients hardcoded in a Secret~~ | ~~Adding a household meant editing Secrets Manager by hand~~ | ✅ Resolved (Sprint A) — self-service `/start <code>`, recipients derive from S3 |
 | ~~Every chat shares one global region~~ | ~~One tariff code for every recipient, regardless of where they live~~ | ✅ Resolved (Sprint B) — postcode→GSP region at onboarding, priced per region |
-| Every chat shares one global task-parameter registry | `dishwasher`/`ev` still have no per-chat onboarding or config | Sprint C (task-selection onboarding) |
+| ~~Every chat shares one global task-parameter registry~~ | ~~`dishwasher`/`ev` had no per-chat onboarding or config~~ | ✅ Resolved (Sprint C) — button multi-select + per-task config for all three tasks |
+| EV has no deadline or kWh-based cost yet | EV search spans the whole day and cost isn't estimated per-session | Add deadline + kWh questions once product decides the UX |
 | UTC-only week definition | Households far from UTC see slightly wrong week boundaries | Use `HRSE_DISPLAY_TIMEZONE` in `WeeklyStateService` |
 
 ---

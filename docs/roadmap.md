@@ -1,8 +1,8 @@
 # HRSE Roadmap
 
-Version: 3.3
+Version: 3.4
 
-Status: Post-MVP Evolution — Sprints 5A/5B/5C/A/B complete (2026-08-07)
+Status: Post-MVP Evolution — Sprints 5A/5B/5C/A/B/C complete (2026-08-07)
 
 ---
 
@@ -379,10 +379,56 @@ Outcome:
   concept); per-task parameters and the task-selection onboarding UI are
   still Sprint C's scope, untouched here.
 
-**Next up:** Sprint C — task-selection onboarding: replace the reused
-`/setup` laundry conversation in the registration flow with a proper
-button-driven task-selection step (`/tasks`/`/add_task` becomes onboarding
-UI, not just a post-registration command).
+**Next up:** Sprint C — task-selection onboarding (below).
+
+---
+
+## Sprint C — Button Task Onboarding
+
+Status: Complete (2026-08-07)
+
+Focus:
+
+* Replace the typed `/setup` conversation with a button-driven flow
+* Multi-select task picker (laundry / dishwasher / EV), chosen once
+* Per-task button config; explicit `weather_aware` gate
+* Retire `/add_task` / `/remove_task`
+
+Outcome:
+
+* Registration now flows continuously: `/start <code>` → language →
+  postcode/region → a multi-select inline-keyboard task picker (at least
+  one task required, "Done" blocked otherwise) → per-task button config,
+  one task at a time → completion summary. No typed conversation and no
+  add/remove-task commands — a chat picks its tasks once, up front;
+  changing the set means `/reset`, which now restarts the whole flow from
+  the language picker.
+* `ChatSettings` gained explicit onboarding-state fields
+  (`onboarding_stage`, `pending_task_selection`, `pending_config_queue`,
+  `onboarding_task_step`, `awaiting_typed_field`) — the existing `profiles`
+  dict needed no schema change, since it already modelled "which tasks +
+  each one's params."
+* `weather_aware: bool` (on `TaskProfile` and every `FlexibleTaskConfig`)
+  replaces the old permissive-defaults trick (`min_uv=0`,
+  `max_rain_probability=100`) for dishwasher/EV — `DecisionService` now
+  skips the weather rule outright for weather-blind tasks, rather than
+  relying on thresholds that happen to never trip.
+* EV's onboarding asks exactly one question (charge duration) and reuses
+  `DecisionService`'s existing contiguous-window search/ranking unchanged
+  — no bespoke EV scheduling algorithm was written. Deadline and
+  kWh-based cost estimation are explicitly out of scope this sprint.
+* Forward-only: no `model_validator` was added to migrate pre-Sprint-C
+  records into the new state shape. Existing deployments must clear (or
+  `/reset`) each chat's old `settings/{chat_id}.json` after deploy — see
+  the deploy runbook in `README.md`.
+* Deliberately deferred (tracked below): EV deadline, EV kWh/savings
+  estimation, constraint-based/multi-task-aware scheduling (today each
+  task is still evaluated independently), and opening registration beyond
+  the invite-only gate.
+
+**Next up:** per-task activity counts (Rule 1 still only tracks
+`laundry_count` for every task type — see `README.md`'s tech-debt table),
+then whichever of the deferred items above product prioritises next.
 
 ---
 

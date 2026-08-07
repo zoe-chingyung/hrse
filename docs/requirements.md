@@ -1,7 +1,7 @@
 # HRSE — Requirements
 
-> Status: **Sprint 4 Complete**
-> Last updated: 2026-06-24
+> Status: **Sprint C Complete**
+> Last updated: 2026-08-07
 
 ---
 
@@ -117,6 +117,20 @@ per-tenant config or data partitioning.
 | FR-74 | A region whose price fetch fails SHALL NOT block notifications to chats in other regions; only that region's chats are skipped for the run. | ✅ Done |
 | FR-75 | A regional tariff code SHALL only ever be built from a validated GSP letter (the real 14-letter set; `I`/`O` excluded) — never assembled from unvalidated input. | ✅ Done |
 
+### 3.9 Button-Driven Task Onboarding (Sprint C)
+
+| ID | Requirement | Status |
+|---|---|---|
+| FR-80 | A chat SHALL select which tasks it wants (laundry, dishwasher, EV) **once**, all at once, via a multi-select button picker — not incrementally via add/remove commands. | ✅ Done |
+| FR-81 | The "Done" action on the task picker SHALL be blocked (re-prompt, no state change) when zero tasks are selected. | ✅ Done |
+| FR-82 | Onboarding selections (language, region fallback, task picker, per-task config) SHALL be made via inline-keyboard buttons wherever a fixed, enumerable option set exists; free text SHALL be used only where buttons cannot reasonably cover the input (postcode; a config question's "Other" fallback). | ✅ Done |
+| FR-83 | **Invariant (unchanged from FR-62):** a chat becomes a daily-notification recipient only once every selected task's button config is complete (`onboarding_complete: true`). No partial selection confers recipient status. | ✅ Done |
+| FR-84 | Changing a chat's task selection or any per-task parameter SHALL require `/reset` followed by redoing onboarding — there SHALL be no add-task/remove-task command. | ✅ Done |
+| FR-85 | The persisted `ChatSettings`/`TaskProfile` schema SHALL be forward-only: no `model_validator` may be added to migrate a pre-Sprint-C record into the new onboarding-state shape. Operators clear stale records manually (delete the S3 object, or run `/reset`) after deploy. | ✅ Done |
+| FR-86 | The dishwasher task SHALL never be gated by, or require, a weather forecast (`weather_aware: false`); its onboarding SHALL ask no weather-related questions. | ✅ Done |
+| FR-87 | The EV charging task SHALL ask only a charge-duration question; it SHALL NOT ask for a deadline or kWh amount in this sprint (deliberately deferred — see roadmap). Its recommendation window SHALL search the entire day for the cheapest contiguous block of the chosen duration. | ✅ Done |
+| FR-88 | Every code path that looks up a task's display label or question set SHALL key off the `TASK_REGISTRY` name (`"ev"`), never off `FlexibleTaskConfig.task_name` (`"ev_charging"`) — the two SHALL NOT be used interchangeably. | ✅ Done |
+
 ---
 
 ## 4. Non-Functional Requirements
@@ -163,16 +177,17 @@ Default `LaundryTaskConfig` (hardcoded in `schedule_handler.py`, config-driven i
 
 ## 7. Future Extensibility
 
-The plugin architecture is designed for additional tasks:
+The plugin architecture supports additional tasks:
 
 ```
-LaundryTask       ← implemented
-DishwasherTask    ← planned
-EVChargingTask    ← planned
+LaundryTask       ← implemented, full button onboarding (Sprint C)
+DishwasherTask    ← implemented, full button onboarding (Sprint C)
+EVChargingTask    ← implemented, single-question button onboarding (Sprint C);
+                     deadline + kWh-based cost deliberately deferred
 CoolingTask       ← planned
 ```
 
-Each task will implement the same `FlexibleTask` Protocol: `evaluate()`, `config()`, `recommendation()`. The `DecisionService` will dispatch to the appropriate task based on the event type.
+Each task satisfies the `FlexibleTaskConfig` structural `Protocol` (see `docs/architecture.md` §13) — no shared base class required. `DecisionService.evaluate()` is already generic over any task satisfying it.
 
 ---
 

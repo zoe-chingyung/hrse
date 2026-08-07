@@ -1,6 +1,6 @@
 # HRSE — Architecture
 
-> Status: **Timezone fix + Sprint 5A/5B/5C/A/B Complete**
+> Status: **Timezone fix + Sprint 5A/5B/5C/A/B/C Complete**
 > Last updated: 2026-08-07
 
 ---
@@ -44,8 +44,8 @@ It runs entirely on AWS managed services with zero operational overhead. Users i
 │   │  telegram-handler (Lambda)  │◄── Telegram webhook              │
 │   │  /health /laundry_done      │                                  │
 │   │  /events /summary /prices   │──► S3 event store                │
-│   │  /setup /profile /reset     │──► S3 chat-settings store        │
-│   │  /tasks /add_task /remove_task                                 │
+│   │  /profile /reset /tasks     │──► S3 chat-settings store        │
+│   │  button onboarding (callback_query: lang/region/task/cfg)      │
 │   └─────────────────────────────┘                                  │
 │                                                                     │
 │   S3: hrse-{env}-state/events/household_events.json                │
@@ -65,7 +65,7 @@ It runs entirely on AWS managed services with zero operational overhead. Users i
 | EventBridge rules | Amazon EventBridge | Two cron schedules: 16:45 (planning) and 08:00 (reminder) |
 | API Gateway HTTP API | Amazon API Gateway v2 | Exposes `POST /webhook` to Telegram |
 | Event store | Amazon S3 | Household activity events as a JSON array |
-| Chat-settings store | Amazon S3 | One `ChatSettings` JSON object per chat (`settings/{chat_id}.json`): language, profile, onboarding step/completion, enabled tasks, GSP region code. Source of truth for recipients (Sprint A) and their pricing region (Sprint B). |
+| Chat-settings store | Amazon S3 | One `ChatSettings` JSON object per chat (`settings/{chat_id}.json`): language, per-task `profiles` dict, button-onboarding state (stage/queue/step), enabled tasks, GSP region code, completion flag. Source of truth for recipients (Sprint A), their pricing region (Sprint B), and their selected tasks (Sprint C). |
 | Secrets | AWS Secrets Manager | `bot_token` only for Telegram (Sprint A: `chat_id`/`chat_ids` no longer read by the daily job) |
 | Observability | Lambda Powertools + CloudWatch | Structured logging, X-Ray tracing |
 | Infrastructure | Terraform | All resources versioned as code |
@@ -95,10 +95,10 @@ Rule 1 — Target check
   by the same laundry counter. Flagged as tech debt (README).
 
 Rule 2 — Weather gate (day-level)
+  config.weather_aware is False  → rule skipped entirely (dishwasher/EV —
+                                    see §18, "Weather-Aware Gate")
   uv_index <= min_uv            → NOT RECOMMENDED ("UV too low")
   rain_probability >= max_rain  → NOT RECOMMENDED ("rain too high")
-  dishwasher/EV configs default min_uv=0, max_rain_probability=100, making
-  this rule maximally permissive (effectively no weather gate).
 
 Rule 3 — Valid windows
   Build all runs of duration_slots consecutive 30-min slots
@@ -307,9 +307,9 @@ Schedule Lambda IAM grants:
 |---|---|---|
 | S3 read-modify-write with no concurrency control | Concurrent Lambda invocations could lose events | S3 conditional puts (ETag) or move events to DynamoDB |
 | Rule 1 (target check) reads `WeeklySummary.laundry_count` for every task | A dishwasher/EV target check is gated by the laundry counter, not its own | Generalise events/`WeeklySummary` to per-task completion counts |
-| `dishwasher`/`ev` have no `/setup` onboarding or env config | Only their `TASK_REGISTRY` built-in defaults are used, chat-wide | Extend the onboarding step table or add per-task env vars |
 | ~~Every registered chat shares one global region~~ | ~~One tariff code for every recipient regardless of location~~ | ✅ Resolved (Sprint B) — see §17 |
-| Every registered chat shares one global task-parameter registry | `dishwasher`/`ev` still have no per-chat onboarding or config | Sprint C (task-selection onboarding) |
+| ~~`dishwasher`/`ev` have no onboarding or per-chat config~~ | ~~Only `TASK_REGISTRY` built-in defaults were used, chat-wide~~ | ✅ Resolved (Sprint C) — see §18 |
+| EV has no deadline or kWh-based cost | Search spans the whole day; cost isn't estimated per charge session | Add once product decides the UX (deliberately deferred) |
 | UTC-only week definition | Households far from UTC see slightly wrong week boundaries | Use `HRSE_DISPLAY_TIMEZONE` in `WeeklyStateService` |
 
 ---
@@ -345,7 +345,7 @@ config = LaundryTaskConfig.from_profile_or_settings(profile, settings) if name =
          else TASK_REGISTRY[name]()
 ```
 
-`ChatSettings.enabled_tasks` (default `["laundry"]`) is the per-chat list of registry keys to evaluate; `/tasks`, `/add_task <name>`, `/remove_task <name>` manage it. `schedule_handler` evaluates one `Recommendation` per enabled task and `NotificationService.format_multi()` renders one message block per task (§5.1).
+`ChatSettings.enabled_tasks` is the per-chat list of registry keys to evaluate — set once, all at once, by the button multi-select picker during onboarding (§18); `/tasks` is a read-only view of it (no more `/add_task`/`/remove_task` — changing the set means `/reset`). `schedule_handler` evaluates one `Recommendation` per enabled task and `NotificationService.format_multi()` renders one message block per task (§5.1).
 
 Note the two separate label vocabularies: `TASK_REGISTRY` keys (`"ev"`) are what Telegram commands operate on; `Recommendation.task` / `LaundryTaskConfig.task_name` values (`"ev_charging"`) are what the engine and notification blocks use. `EVChargingConfig.task_name` maps the former to the latter.
 
@@ -372,28 +372,77 @@ chat has a TaskProfile (completed /setup)?
 
 ---
 
-## 15. Onboarding State Machine (Sprint 5B)
+## 15. Button Onboarding State Machine (Sprint C)
 
-Telegram has no built-in multi-turn dialog state, so it's persisted on `ChatSettings.onboarding_step` (an `int | None`) and driven by a table-driven step list in `telegram/commands.py`:
+Telegram has no built-in multi-turn dialog state, so it's persisted on `ChatSettings` and driven entirely by inline-keyboard `callback_query` presses — free text is only accepted in two situations (postcode, and a config question's "Other" follow-up). The typed `/setup` conversation from Sprint 5B is gone; there's no `/add_task`/`/remove_task` either — task selection happens once, up front, as part of this flow.
 
-```python
-_SETUP_STEPS = (
-    ("laundry_target_per_week", MessageKey.SETUP_Q_LAUNDRY_TARGET, _parse_setup_target),
-    ("earliest_start",          MessageKey.SETUP_Q_EARLIEST_START, _parse_setup_hhmm),
-    ("latest_finish",           MessageKey.SETUP_Q_LATEST_FINISH,  _parse_setup_hhmm),
-    ("outdoor_drying",          MessageKey.SETUP_Q_OUTDOOR_DRYING, _parse_setup_bool),
-    ("timezone",                MessageKey.SETUP_Q_TIMEZONE,       _parse_setup_timezone),
-    ("wash_budget_pence",       MessageKey.SETUP_Q_WASH_BUDGET,    _parse_setup_budget),
-)
+### State fields
+
+| Field | Meaning |
+|---|---|
+| `onboarding_stage` | `"postcode" \| "tasks" \| "config" \| None`. `None` means no onboarding conversation is active — this is what the router checks to decide whether plain text should go to `handle_onboarding_answer` instead of the unknown-command fallback. |
+| `onboarding_step` | `0` while resolving the postcode/region; unrelated to per-task question progress. |
+| `pending_task_selection` | Registry keys currently checked in the multi-select picker, before "Done" is pressed. Transient. |
+| `pending_config_queue` | Registry keys still awaiting per-task config, in canonical `TASK_ORDER` (`laundry`, `dishwasher`, `ev`). `queue[0]` is the task currently being asked about. |
+| `onboarding_task_step` | Index into `pending_config_queue[0]`'s question list (`_TASK_QUESTIONS[task_key]` in `telegram/commands.py`). |
+| `awaiting_typed_field` | Set to a `TaskProfile` field name when its "Other" button was pressed; cleared once the typed answer lands. Only while this is set does plain text during the `"config"` stage get parsed as an answer. |
+
+### Flow
+
+```
+/start <code> or /reset
+    │
+    ▼
+handle_welcome() — bilingual language keyboard (lang:en / lang:zh)
+    │  callback_query "lang:<code>"
+    ▼
+handle_language_callback() — saves language;
+    if NOT onboarding_complete → _start_postcode_step()
+    (a chat changing language via /language after finishing setup just gets
+    the confirmation — no restart)
+    │  stage="postcode"
+    ▼
+postcode text → _handle_postcode_answer()  (or region:<letter> callback
+    on lookup failure — mirrors the language picker, see §17)
+    │  region resolved → _start_task_selection()
+    ▼
+stage="tasks" — multi-select picker (🧺/🍽/🔌, one row each + "Done")
+    │  callback_query "task:<key>" toggles pending_task_selection,
+    │  redraws the same message via edit_message_text(..., reply_markup=...)
+    │  callback_query "task_done":
+    │      zero selected → re-show the picker with a warning (blocked)
+    │      ≥1 selected   → create a default TaskProfile per task (in
+    │                      TASK_ORDER), set enabled_tasks + profiles,
+    │                      stage="config", pending_config_queue=selected
+    ▼
+stage="config" — per-task button questions, one task at a time
+    │  callback_query "cfg:<field>:<value>" → parse, validate against
+    │  TaskProfile, save, advance onboarding_task_step (or move to the
+    │  next queued task, or finish)
+    │  callback_query "cfg:<field>:other" → awaiting_typed_field=<field>,
+    │  next plain-text message is parsed as that field's answer instead
+    ▼
+last question of last queued task answered
+    │
+    ▼
+onboarding_complete=True, onboarding_stage=None — SETUP_COMPLETE_SUMMARY sent
 ```
 
-Flow:
+### Per-task question tables
 
-1. `/setup` → `handle_setup_start`: saves `ChatSettings(profile=TaskProfile(), onboarding_step=0, ...)` (always a fresh profile — "restart" means starting over) and sends question 0.
-2. `router._route_message` checks known commands first; only in the final `else` branch does it check `chat_settings.onboarding_step is not None` and route plain text to `handle_onboarding_answer` instead of the unknown-command fallback. This means other commands (e.g. `/language`) still work mid-onboarding without cancelling it.
-3. `handle_onboarding_answer` looks up the current step's `(field_name, question_key, parser)`, calls `parser(text)`, and rebuilds the profile via `TaskProfile(**{**profile.model_dump(), field_name: value})` — going through the constructor (not `model_copy(update=...)`) so every field validator, including the cross-field `latest_finish > earliest_start` check, re-runs on each answer.
-4. On `(ValueError, ValidationError)` from either the parser or the rebuild, the same question is re-sent with a hint — `onboarding_step` does not advance.
-5. On the last step, `onboarding_step` is cleared (`None`) and `SETUP_DONE` is sent; the finished `profile` is now used everywhere `from_profile_or_settings` is called for that chat.
+`_TASK_QUESTIONS: dict[str, tuple[_ButtonQuestion, ...]]` in `telegram/commands.py` holds one ordered tuple per registry key. Each `_ButtonQuestion` is `(field, message_key, options, parser, allow_other)`; `options` is `(button_label, value_string)` pairs where `value_string` is exactly what gets embedded in `callback_data` and handed to `parser` — so a button press and a typed "Other" answer for the same field go through the identical parse/validate path (`TaskProfile(**{**profile.model_dump(), field: value})`, which re-runs every field validator including the cross-field `latest_finish > earliest_start` check).
+
+| Task | Questions | Notes |
+|---|---|---|
+| `laundry` | 9: target/week, duration, budget, earliest, latest, outdoor drying (buttons only, no "Other"), min UV, max rain, timezone | Full flow; `weather_aware=True` fixed, not asked |
+| `dishwasher` | 6: target/week, duration, budget, earliest, latest, timezone | No weather questions; `weather_aware=False` fixed |
+| `ev` | 1: charge duration (4h/6h/8h/10h → `duration_slots`, buttons only) | See §18 for why this is the only question |
+
+A stale button press (from an earlier question or a task no longer at the front of the queue) is detected by comparing the callback's embedded field name against `_TASK_QUESTIONS[pending_config_queue[0]][onboarding_task_step].field`, and is a no-op (just acknowledged) on mismatch.
+
+### The "ev" key vs "ev_charging" task_name guard
+
+`_TASK_DISPLAY` and `_TASK_QUESTIONS` are always keyed by the `TASK_REGISTRY` key (`"ev"`) — never by `EVChargingConfig.task_name` (`"ev_charging"`), which only shows up in `Recommendation.task` / notification blocks (§13 documents the same split for the pre-existing `/tasks` command). Every onboarding lookup goes through the registry key; the split is called out explicitly in code comments at each lookup site since mixing the two up silently produces a `KeyError` or a blank label rather than a loud failure.
 
 ---
 
@@ -412,11 +461,13 @@ Flow:
     │
     └─ code correct → save ChatSettings(onboarding_complete=False, ...)
                         → handle_welcome() (bilingual welcome + language keyboard)
-                            → /language callback, then /setup
-                                → final /setup answer sets onboarding_complete=True
+                            → language callback continues straight into the
+                              button onboarding flow (§15)
+                                → finishing the last selected task's config
+                                  sets onboarding_complete=True
 ```
 
-`/reset` sets `onboarding_complete=False` and clears `profiles`/`onboarding_step`, dropping the chat from notifications until it completes `/setup` again. Every other settings-mutating path (`/language` callback, `/add_task`, `/remove_task`, restarting `/setup`) preserves whatever `onboarding_complete` was already — none of them are meant to change registration status, only `/start`'s registration branch and `/reset`/the final `/setup` step are.
+`/reset` clears `profiles`/`enabled_tasks`/`onboarding_complete` and restarts the button flow from the language picker, dropping the chat from notifications until it completes setup again (§15). The `/language` callback itself preserves whatever `onboarding_complete` was already when the chat has already finished onboarding — it only continues into the postcode step for a chat that hasn't; changing language after setup is complete never re-triggers registration.
 
 **Fan-out (`schedule_handler`):**
 
@@ -448,7 +499,7 @@ The `onboarding_complete` filter only applies to the store-derived path — `_ch
 
 ### Region capture (onboarding, one-time)
 
-`/setup` step 0 asks for a postcode instead of jumping straight to the laundry questions:
+Button onboarding's `"postcode"` stage (§15) asks for a postcode right after language, before task selection:
 
 ```
 postcode text
@@ -457,7 +508,8 @@ postcode text
     │       one match  → region letter, e.g. "C"
     │       no/ambiguous match, or any error → None (never raises)
     │
-    ├─ region found → save ChatSettings.octopus_region_code, advance to step 1
+    ├─ region found → save ChatSettings.octopus_region_code, advance to
+    │                 the multi-select task picker (stage="tasks")
     │
     └─ region not found → send the 14-button region-picker keyboard
             (region:<letter> callback_query → handle_region_callback,
@@ -465,7 +517,7 @@ postcode text
              postcode to retry the lookup
 ```
 
-Every later `/setup` question is indexed off step 1 onward (`_SETUP_STEPS[step - 1]` in `telegram/commands.py`), so `onboarding_complete` can never become `True` without a region already set — structural enforcement, not a separate runtime check.
+The task multi-select picker and every per-task question only become reachable once the postcode stage hands off to `_start_task_selection()` (§15), so `onboarding_complete` can never become `True` without a region already set — structural enforcement (step ordering), not a separate runtime check.
 
 ### Fan-out (`schedule_handler`), grouped by region
 
@@ -496,3 +548,19 @@ for chat_id in chat_ids:
 Weather stays a single global fetch (`WeatherClient.get_forecast`) — no per-region concept exists for it in this sprint.
 
 ---
+
+## 18. Weather-Aware Gate & Shared Window Search (Sprint C)
+
+### `weather_aware`
+
+Pre-Sprint-C, dishwasher/EV disabled the weather gate implicitly, by defaulting `min_uv=0` and `max_rain_probability=100` so Rule 2's comparisons could (almost) never trip. Sprint C replaces that with an explicit `weather_aware: bool` field on both `TaskProfile` and every `FlexibleTaskConfig` (protocol member — see §13):
+
+- `TaskProfile.weather_aware` defaults `True`; the button flow sets it once, at task-selection time, via `_default_profile_for_task()` — `True` for laundry, `False` for dishwasher/EV. It is never asked as a question; it's a property of the task type, not a user preference.
+- `LaundryTaskConfig.weather_aware` defaults `True`; `DishwasherConfig`/`EVChargingConfig` default `False` at the class level, and `build_task_config()` forwards `profile.weather_aware` through for every task (laundry included) rather than special-casing it.
+- `DecisionService._weather_failures()` returns `[]` immediately when `config.weather_aware` is `False` — the forecast is still passed in (schedule_handler fetches it once, globally, for every task) but is never read or required for a weather-blind task. The `reasons` list built for a recommended weather-aware-`False` task also drops the UV/rain lines, since they'd be misleading ("UV index above 0.0" reads like a real gate when there isn't one).
+
+### EV's window search reuses the engine, not a bespoke algorithm
+
+EV's onboarding question set is deliberately one entry: charge duration (§15), mapped straight to `TaskProfile.duration_slots`. No deadline, no kWh — per product decision, EV search spans the **whole day** rather than a fixed overnight slot: `_default_profile_for_task("ev")` sets `earliest_start="00:00"`, `latest_finish="23:30"` on the profile, which `build_task_config()` carries into the runtime `EVChargingConfig` exactly like any other field.
+
+From there, EV asks nothing new of the decision engine. `DecisionService._candidate_windows()` (§4, Rule 3) already builds every contiguous `duration_slots`-length block of priced slots inside `earliest_start`..`latest_finish` and Rule 5 ranks them by total cost — this is the sliding-window cheapest-contiguous-block logic laundry and dishwasher already use; EV differs only in window length (from the duration button) and `weather_aware=False` (above). There is a similarly-named `_best_window()` helper in `services/price_chart.py`, but it belongs to a different feature entirely — it powers the `/prices` command's chart rendering, not recommendations, and `DecisionService` neither calls it nor shares code with it. Don't confuse the two: `_candidate_windows`/Rule 5 is the one path that actually produces `Recommendation`s for all three tasks.
