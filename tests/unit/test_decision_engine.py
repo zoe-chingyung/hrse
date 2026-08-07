@@ -347,3 +347,38 @@ class TestGenericFlexibleTaskConfig:
         rec = DecisionService().evaluate(_summary(1), [], _forecast(), config)
         assert rec.task == "dishwasher"
         assert rec.recommended is False
+
+    def test_recommended_reasons_are_task_agnostic_wording(self) -> None:
+        # Regression guard: reasons must not say "laundry"/"wash" for a task
+        # that isn't laundry — DecisionService is generic, and its reason
+        # strings must read correctly for dishwasher/EV recommendations too.
+        cases = (
+            (
+                DishwasherConfig(duration_slots=2, wash_budget_pence=99.0, machine_kwh=1.0),
+                _slots(13, 0, [8.0, 8.0]),  # inside dishwasher's default 08:00-22:00 window
+            ),
+            (
+                EVChargingConfig(
+                    duration_slots=2,
+                    earliest_start="00:00",
+                    latest_finish="07:00",
+                    wash_budget_pence=99.0,
+                    machine_kwh=1.0,
+                ),
+                _slots(1, 0, [8.0, 8.0]),
+            ),
+        )
+        for config, prices in cases:
+            rec = DecisionService().evaluate(
+                _summary(0), prices, _forecast(uv=0.1, rain=99), config
+            )
+            assert rec.recommended is True
+            joined = " ".join(rec.reasons).lower()
+            assert "laundry" not in joined
+            assert "wash" not in joined
+
+    def test_already_met_reason_is_task_agnostic_wording(self) -> None:
+        config = DishwasherConfig(target_runs_per_week=1)
+        rec = DecisionService().evaluate(_summary(1), [], _forecast(), config)
+        joined = " ".join(rec.reasons).lower()
+        assert "laundry" not in joined

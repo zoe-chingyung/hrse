@@ -98,7 +98,7 @@ class DecisionService:
                 extra={"task": config.task_name, "count": summary.laundry_count},
             )
             return Recommendation(
-                task=config.task_name, recommended=False, reasons=["laundry target already met"]
+                task=config.task_name, recommended=False, reasons=["weekly target already met"]
             )
 
         # Rule 4 (day-level gate) — apply weather before bothering with slots.
@@ -139,8 +139,8 @@ class DecisionService:
             end=best.slots[-1].timestamp + _SLOT,
         )
         reasons = [
-            "laundry target not met",
-            f"wash cost within budget ({config.wash_budget_pence}p)",
+            "weekly target not met",
+            f"cost within budget ({config.wash_budget_pence}p)",
         ]
         if config.weather_aware:
             reasons.append(f"UV index above {config.min_uv}")
